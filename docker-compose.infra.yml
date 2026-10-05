@@ -1,0 +1,282 @@
+# =============================================================================
+# Samvada Platform — Infrastructure Docker Compose
+# =============================================================================
+# This file provisions ALL shared data infrastructure for local development:
+#   1. PostgreSQL 16   — Two logical databases: samvada_auth & samvada_abs
+#   2. Redis 7         — Shared session/cache store (Auth, ABS, S2S, RE)
+#   3. ClickHouse 24   — Analytics OLAP engine (Reporting Engine)
+#   4. Apache Kafka     — Distributed event bus (via KRaft, no Zookeeper)
+#
+# Usage:
+#   docker compose -f docker-compose.infra.yml up -d
+#   docker compose -f docker-compose.infra.yml down
+#   docker compose -f docker-compose.infra.yml down -v   # destroy volumes
+#
+# All services expose ports on localhost for local Go service development.
+# =============================================================================
+
+name: samvada-infra
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. PostgreSQL 16 — Relational Store (Auth + ABS databases)
+  # ---------------------------------------------------------------------------
+  # Single Postgres instance hosts two databases:
+  #   - samvada_auth  (used by Auth Service)
+  #   - samvada_abs   (used by Application & Billing Service)
+  #
+  # The init script (init-databases.sh) auto-creates both on first boot.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: samvada-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: samvada
+      POSTGRES_PASSWORD: samvada_dev_2026
+      POSTGRES_DB: samvada_auth                 # Default DB created on init
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U samvada -d samvada_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 2. Redis 7 — In-Memory Cache & Session Store
+  # ---------------------------------------------------------------------------
+  # Shared across all 4 microservices:
+  #   - Auth:  OTP storage, session cache, rate limiting buckets
+  #   - ABS:   Agent config cache, call ticket nonce store
+  #   - S2S:   Live call state (active call registry), agent config cache
+  #   - RE:    Dashboard query cache (60s TTL)
+  #
+  # Persistence: AOF enabled for crash recovery of session state.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: samvada-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --loglevel notice
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 3. ClickHouse 24 — OLAP Analytics Engine (Reporting Engine)
+  # ---------------------------------------------------------------------------
+  # Stores all call events, turn-level sentiment, and pre-aggregated
+  # materialized views for sub-100ms dashboard queries.
+  #
+  # The init SQL script auto-creates the samvada_analytics database and
+  # all tables + materialized views on first boot.
+  # ---------------------------------------------------------------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: samvada-clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"   # HTTP interface (queries, health, web UI)
+      - "9000:9000"   # Native TCP protocol (Go driver connects here)
+    environment:
+      CLICKHOUSE_DB: samvada_analytics
+      CLICKHOUSE_USER: samvada
+      CLICKHOUSE_PASSWORD: samvada_ch_2026
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      - ./infra/clickhouse/init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user samvada --password samvada_ch_2026 --query 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 4. Apache Kafka (KRaft Mode — No Zookeeper Required)
+  # ---------------------------------------------------------------------------
+  # Single-node KRaft broker for local development.
+  # All Samvada Kafka topics are auto-created via the init script on first boot.
+  #
+  # KRaft eliminates Zookeeper dependency (production-ready since Kafka 3.5+).
+  # Dual-listener configuration:
+  #   - PLAINTEXT://kafka:9092      (internal Docker network communication)
+  #   - EXTERNAL://localhost:9092   (host machine communication via port 9093)
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:latest
+    container_name: samvada-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9093"    # Host connects to 9092 -> routed to container EXTERNAL 9093
+    environment:
+      # KRaft mode configuration (no Zookeeper)
+      CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9094
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Dual Listener configuration (internal Docker + external host)
+      KAFKA_LISTENERS: PLAINTEXT://:9092,EXTERNAL://:9093,CONTROLLER://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Storage & Performance tuning
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168                   # 7 days default retention
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824              # 1 GB segments
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"         # Explicit topic creation only
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 5. Kafka Topic Initializer (One-Shot Init Container)
+  # ---------------------------------------------------------------------------
+  # Creates all required Kafka topics with correct partition counts and
+  # retention policies. Runs once and exits.
+  # ---------------------------------------------------------------------------
+  kafka-init:
+    image: apache/kafka:latest
+    container_name: samvada-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "=============================================="
+        echo "  Samvada Kafka Topic Initialization"
+        echo "=============================================="
+
+        BROKER="kafka:9092"
+
+        # Helper function to create a topic idempotently
+        create_topic() {
+          local TOPIC=$$1
+          local PARTITIONS=$$2
+          local RETENTION_MS=$$3
+          local RETENTION_DAYS=$$(( RETENTION_MS / 86400000 ))
+
+          echo "Creating topic: $$TOPIC (partitions=$$PARTITIONS, retention=$${RETENTION_DAYS}d)"
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server $$BROKER \
+            --create --if-not-exists \
+            --topic $$TOPIC \
+            --partitions $$PARTITIONS \
+            --replication-factor 1 \
+            --config retention.ms=$$RETENTION_MS
+        }
+
+        # Auth Service events
+        create_topic "auth.user.registered"    6   604800000      # 7 days
+
+        # ABS Service events
+        create_topic "abs.agent.updated"       12  259200000      # 3 days
+        create_topic "abs.campaign.dispatch"   12  604800000      # 7 days
+        create_topic "abs.webhook.event"       12  259200000      # 3 days
+
+        # S2S Engine events
+        create_topic "s2s.call.started"        24  1209600000     # 14 days
+        create_topic "s2s.call.completed"      24  2592000000     # 30 days
+        create_topic "s2s.call.turns"          24  604800000      # 7 days
+
+        echo "=============================================="
+        echo "  All Kafka topics created successfully!"
+        echo "=============================================="
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server $$BROKER --list
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 6. Kafka UI — Web-based Kafka Management Dashboard
+  # ---------------------------------------------------------------------------
+  # Browse topics, messages, consumer groups, and cluster health.
+  # Access at: http://localhost:8088
+  # ---------------------------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: samvada-kafka-ui
+    restart: unless-stopped
+    ports:
+      - "8088:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: samvada-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - samvada-net
+
+# =============================================================================
+# Persistent Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+    driver: local
+    name: samvada-postgres-data
+  redis_data:
+    driver: local
+    name: samvada-redis-data
+  clickhouse_data:
+    driver: local
+    name: samvada-clickhouse-data
+  clickhouse_logs:
+    driver: local
+    name: samvada-clickhouse-logs
+  kafka_data:
+    driver: local
+    name: samvada-kafka-data
+
+# =============================================================================
+# Network
+# =============================================================================
+networks:
+  samvada-net:
+    driver: bridge
+    name: samvada-network

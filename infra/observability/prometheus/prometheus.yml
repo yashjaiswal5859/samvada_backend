@@ -1,0 +1,57 @@
+# =============================================================================
+# Samvada Platform — Central Prometheus Monitoring Configuration
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alerts.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+scrape_configs:
+  - job_name: "abs-service"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["abs:8082"]
+        labels:
+          service: "abs"
+          env: "production"
+
+  - job_name: "reporting-service"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["reporting:8083"]
+        labels:
+          service: "reporting"
+          env: "production"
+
+  - job_name: "auth-service"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["auth:8081"]
+        labels:
+          service: "auth"
+          env: "production"
+
+  - job_name: "s2s-engine"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["s2s:8084"]
+        labels:
+          service: "s2s"
+          env: "production"
+
+  - job_name: "nginx-gateway"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["gateway:443"]
+        labels:
+          service: "gateway"
+          env: "production"

@@ -1,0 +1,95 @@
+# =============================================================================
+# Samvada Platform — Enterprise Prometheus Alerting Rules (Phase 6.1)
+# Triggers PagerDuty, Opsgenie, and Slack alerts for critical SLI breaches
+# =============================================================================
+
+groups:
+  - name: samvada_platform_slis
+    rules:
+      # -----------------------------------------------------------------------
+      # 1. Latency SLI Alerts (P50 & P99 Breaches)
+      # -----------------------------------------------------------------------
+      - alert: APILatencyP99Breach
+        expr: (rate(http_request_duration_seconds_sum[5m]) / rate(http_requests_total[5m])) > 0.500
+        for: 2m
+        labels:
+          severity: critical
+          tier: api-gateway
+          pagerduty: "true"
+          opsgenie: "true"
+        annotations:
+          summary: "P99 API request latency exceeded 500ms SLO on {{ $labels.service }}"
+          description: "Average latency over 5m is {{ $value | printf \"%.3f\" }}s, violating enterprise latency SLA."
+          runbook_url: "https://docs.samvada.ai/ops/runbooks/api-latency-spike"
+
+      - alert: APILatencyP50Breach
+        expr: (rate(http_request_duration_seconds_sum[5m]) / rate(http_requests_total[5m])) > 0.150
+        for: 5m
+        labels:
+          severity: warning
+          tier: api-gateway
+        annotations:
+          summary: "P50 API request latency exceeded 150ms target on {{ $labels.service }}"
+          description: "Current P50 latency is {{ $value | printf \"%.3f\" }}s. Monitor downstream database and Redis connections."
+
+      # -----------------------------------------------------------------------
+      # 2. Availability & Error Rate SLIs
+      # -----------------------------------------------------------------------
+      - alert: APIHighErrorRate
+        expr: (sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))) * 100 > 1.0
+        for: 2m
+        labels:
+          severity: critical
+          pagerduty: "true"
+          opsgenie: "true"
+        annotations:
+          summary: "API 5xx error rate exceeded 1.0% (Current: {{ $value | printf \"%.2f\" }}%)"
+          description: "Critical threshold breached. Customers are experiencing failures in call dispatch, auth, or billing."
+
+      - alert: ServiceInstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: page
+          pagerduty: "true"
+          opsgenie: "true"
+        annotations:
+          summary: "Service instance {{ $labels.instance }} ({{ $labels.job }}) is DOWN"
+          description: "Target has failed Prometheus health scraping for more than 60 seconds."
+
+      # -----------------------------------------------------------------------
+      # 3. Message Queue & Processing Lag SLIs
+      # -----------------------------------------------------------------------
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumer_lag_records > 10000
+        for: 3m
+        labels:
+          severity: critical
+          pagerduty: "true"
+          opsgenie: "true"
+        annotations:
+          summary: "Kafka consumer lag exceeded 10,000 records on group {{ $labels.consumergroup }}"
+          description: "Reporting or analytics consumer lag is {{ $value }}. Event ingestion pipeline is backing up."
+          runbook_url: "https://docs.samvada.ai/ops/runbooks/kafka-consumer-lag"
+
+      # -----------------------------------------------------------------------
+      # 4. Cache & Database Performance SLIs
+      # -----------------------------------------------------------------------
+      - alert: RedisCacheHitRatioLow
+        expr: redis_cache_hit_ratio < 0.90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis cache hit ratio dropped below 90% (Current: {{ $value | printf \"%.2f\" }})"
+          description: "Cache efficiency degraded, leading to elevated PostgreSQL query load."
+
+      - alert: ClickHouseQuerySLOBreach
+        expr: clickhouse_query_duration_seconds > 0.100
+        for: 2m
+        labels:
+          severity: critical
+          pagerduty: "true"
+        annotations:
+          summary: "ClickHouse analytics query latency exceeded 100ms SLO target"
+          description: "Query execution took {{ $value | printf \"%.3f\" }}s, impacting dashboard responsiveness."

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: 'Samvada Platform SLIs'
+    orgId: 1
+    folder: 'Platform'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

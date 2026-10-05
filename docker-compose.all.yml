@@ -1,0 +1,567 @@
+# =============================================================================
+# Samvada Platform — Full Development & Production Stack Docker Compose
+# =============================================================================
+# Provisions:
+#   Data Layer:   PostgreSQL 16, Redis 7, ClickHouse 24, Kafka KRaft, MinIO S3
+#   App Services: Auth (:8081), ABS (:8082), Reporting Engine (:8083)
+#   Gateway:      NGINX Reverse Proxy (:8080)
+#   Management:   Kafka UI (:8088), MinIO Console (:9001)
+# =============================================================================
+
+name: samvada-platform
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. PostgreSQL 16
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: samvada-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: samvada
+      POSTGRES_PASSWORD: samvada_dev_2026
+      POSTGRES_DB: samvada_auth
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init-databases.sh:/docker-entrypoint-initdb.d/01-init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U samvada -d samvada_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 2. Redis 7
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: samvada-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 3. ClickHouse 24
+  # ---------------------------------------------------------------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: samvada-clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: samvada_analytics
+      CLICKHOUSE_USER: samvada
+      CLICKHOUSE_PASSWORD: samvada_ch_2026
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./infra/clickhouse/init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user samvada --password samvada_ch_2026 --query 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 4. Apache Kafka (KRaft Mode)
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:latest
+    container_name: samvada-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9093"
+    environment:
+      CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9094
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://:9092,EXTERNAL://:9093,CONTROLLER://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 5. Kafka Topic Initializer
+  # ---------------------------------------------------------------------------
+  kafka-init:
+    image: apache/kafka:latest
+    container_name: samvada-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        BROKER="kafka:9092"
+        create_topic() {
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server $$BROKER --create --if-not-exists --topic $$1 --partitions $$2 --replication-factor 1
+        }
+        create_topic "auth.user.registered" 6
+        create_topic "abs.agent.updated" 12
+        create_topic "abs.campaign.dispatch" 12
+        create_topic "abs.webhook.event" 12
+        create_topic "s2s.call.started" 24
+        create_topic "s2s.call.completed" 24
+        create_topic "s2s.call.turns" 24
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 6. MinIO — S3-Compatible Object Storage
+  # ---------------------------------------------------------------------------
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    container_name: samvada-minio
+    restart: unless-stopped
+    ports:
+      - "9002:9000"   # S3 API endpoint
+      - "9001:9001"   # Web Console
+    environment:
+      MINIO_ROOT_USER: samvada_admin
+      MINIO_ROOT_PASSWORD: samvada_storage_2026
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - samvada-net
+
+  minio-init:
+    image: amazon/aws-cli:latest
+    container_name: samvada-minio-init
+    depends_on:
+      - minio
+    environment:
+      AWS_ACCESS_KEY_ID: samvada_admin
+      AWS_SECRET_ACCESS_KEY: samvada_storage_2026
+      AWS_EC2_METADATA_DISABLED: "true"
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      aws --endpoint-url http://minio:9000 s3 mb s3://samvada-recordings || true;
+      aws --endpoint-url http://minio:9000 s3 mb s3://samvada-kb || true;
+      aws --endpoint-url http://minio:9000 s3 mb s3://samvada-invoices || true;
+      exit 0;
+      "
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 6b. Mailpit — Dev SMTP Server & Web Dashboard
+  # ---------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: samvada-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP Server
+      - "8025:8025"   # Web UI
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 6c. Ory Kratos — Identity Management Engine & DB Migrations
+  # ---------------------------------------------------------------------------
+  kratos-migrate:
+    image: oryd/kratos:v0.13.0
+    container_name: samvada-kratos-migrate
+    networks:
+      - samvada-net
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - ./auth/configs/kratos:/etc/config/kratos
+    command: migrate sql -e --yes --config /etc/config/kratos/kratos.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kratos:
+    image: oryd/kratos:v0.13.0
+    container_name: samvada-kratos
+    restart: unless-stopped
+    networks:
+      - samvada-net
+    ports:
+      - "4433:4433"
+      - "4434:4434"
+    volumes:
+      - ./auth/configs/kratos:/etc/config/kratos
+      - kratos_data:/var/lib/kratos
+    command: serve --config /etc/config/kratos/kratos.yml --dev --watch-courier
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/kratos?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kratos-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4433/health/ready || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # 6d. Ory Hydra — OAuth 2.0 / OIDC Authorization Engine & Migrations
+  # ---------------------------------------------------------------------------
+  hydra-migrate:
+    image: oryd/hydra:v1.11.8
+    container_name: samvada-hydra-migrate
+    networks:
+      - samvada-net
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/hydra?sslmode=disable
+    volumes:
+      - ./auth/configs/hydra:/etc/config/hydra
+    command: migrate sql -e --yes --config /etc/config/hydra/hydra.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  hydra:
+    image: oryd/hydra:v1.11.8
+    container_name: samvada-hydra
+    restart: unless-stopped
+    networks:
+      - samvada-net
+    ports:
+      - "4444:4444"
+      - "4445:4445"
+    volumes:
+      - ./auth/configs/hydra:/etc/config/hydra
+      - hydra_data:/var/lib/hydra
+    command: serve all --dangerous-force-http --config /etc/config/hydra/hydra.yml
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/hydra?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hydra-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4445/health/ready || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # 6e. Ory Keto — Relationship-Based Access Control (ReBAC) & Migrations
+  # ---------------------------------------------------------------------------
+  keto-migrate:
+    image: oryd/keto:v0.8.0-alpha.2
+    container_name: samvada-keto-migrate
+    networks:
+      - samvada-net
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/keto?sslmode=disable
+    volumes:
+      - ./auth/configs/keto:/etc/config/keto
+    command: migrate up --config /etc/config/keto/keto.yml --yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  keto:
+    image: oryd/keto:v0.8.0-alpha.2
+    container_name: samvada-keto
+    restart: unless-stopped
+    networks:
+      - samvada-net
+    ports:
+      - "4466:4466"
+      - "4467:4467"
+    volumes:
+      - ./auth/configs/keto:/etc/config/keto
+      - keto_data:/var/lib/keto
+    command: serve --config /etc/config/keto/keto.yml
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/keto?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keto-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4466/health/ready || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # 6f. Hydra Client Initializer — Idempotently provisions OAuth2 client
+  # ---------------------------------------------------------------------------
+  hydra-init:
+    image: oryd/hydra:v1.11.8
+    container_name: samvada-hydra-init
+    depends_on:
+      hydra:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sleep 2
+        hydra clients get auth-service-client --endpoint http://hydra:4445/ > /dev/null 2>&1 || \
+        hydra clients create --endpoint http://hydra:4445/ --id auth-service-client --secret auth-service-secret --grant-types authorization_code,refresh_token --response-types code --scope openid,offline_access --callbacks http://localhost:8080/api/v1/auth/callback --callbacks http://localhost:8081/api/v1/auth/callback --callbacks http://localhost:5173/api/v1/auth/callback || true
+        exit 0
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 7. Auth Service
+  # ---------------------------------------------------------------------------
+  auth:
+    build:
+      context: .
+      dockerfile: auth/Dockerfile
+    container_name: samvada-auth
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      ENV: production
+      PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: samvada
+      DB_PASSWORD: samvada_dev_2026
+      DB_NAME: samvada_auth
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:9092
+      KRATOS_ADMIN_URL: http://kratos:4434
+      KRATOS_PUBLIC_URL: http://kratos:4433
+      HYDRA_ADMIN_URL: http://hydra:4445
+      HYDRA_PUBLIC_URL: http://hydra:4444
+      HYDRA_BROWSER_URL: http://localhost:4444
+      HYDRA_CLIENT_ID: auth-service-client
+      HYDRA_CLIENT_SECRET: auth-service-secret
+      HYDRA_REDIRECT_URI: http://localhost:8080/api/v1/auth/callback
+      KETO_WRITE_URL: http://keto:4467
+      KETO_READ_URL: http://keto:4466
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kratos:
+        condition: service_healthy
+      hydra:
+        condition: service_healthy
+      keto:
+        condition: service_healthy
+      hydra-init:
+        condition: service_completed_successfully
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 8. Application & Billing Service (ABS)
+  # ---------------------------------------------------------------------------
+  abs:
+    build:
+      context: .
+      dockerfile: abs/Dockerfile
+    container_name: samvada-abs
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+      - "9082:9082"
+    environment:
+      APP_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: samvada
+      DB_PASSWORD: samvada_dev_2026
+      DB_NAME: samvada_abs
+      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: kafka:9092
+      HYDRA_JWKS_URL: http://hydra:4444/.well-known/jwks.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 8b. ABS Async Kafka Worker Engine
+  # ---------------------------------------------------------------------------
+  abs-worker:
+    build:
+      context: .
+      dockerfile: abs/Dockerfile
+    container_name: samvada-abs-worker
+    entrypoint: ["/app/abs-worker"]
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: samvada
+      DB_PASSWORD: samvada_dev_2026
+      DB_NAME: samvada_abs
+      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: kafka:9092
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-proyashjaiswal@gmail.com}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-dcdejmxzhrrouetd}
+      SMTP_FROM: ${SMTP_FROM:-proyashjaiswal@gmail.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      abs:
+        condition: service_started
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 9. Reporting Engine (RE)
+  # ---------------------------------------------------------------------------
+  reporting:
+    build:
+      context: .
+      dockerfile: reporting/Dockerfile
+    container_name: samvada-reporting
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+      - "9083:9083"
+    environment:
+      APP_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: samvada
+      DB_PASSWORD: samvada_dev_2026
+      DB_NAME: samvada_abs
+      CLICKHOUSE_ADDR: clickhouse:9000
+      CLICKHOUSE_DB: samvada_analytics
+      CLICKHOUSE_USER: samvada
+      CLICKHOUSE_PASSWORD: samvada_ch_2026
+      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: kafka:9092
+      HYDRA_JWKS_URL: http://hydra:4444/.well-known/jwks.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 10. Speech-to-Speech (S2S) Engine
+  # ---------------------------------------------------------------------------
+  s2s:
+    build:
+      context: .
+      dockerfile: approach_3_speech_to_speech/voice-agent-go/Dockerfile
+    container_name: samvada-s2s
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    environment:
+      PORT: 8084
+      DATABASE_URL: postgres://samvada:samvada_dev_2026@postgres:5432/samvada_abs?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ABS_GRPC_TARGET: abs:9082
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      abs:
+        condition: service_started
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 11. API Gateway (NGINX Reverse Proxy)
+  # ---------------------------------------------------------------------------
+  gateway:
+    image: nginx:alpine
+    container_name: samvada-gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - ./infra/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/gateway/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - auth
+      - abs
+      - reporting
+      - s2s
+    networks:
+      - samvada-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  clickhouse_data:
+  kafka_data:
+  minio_data:
+  kratos_data:
+  hydra_data:
+  keto_data:
+
+networks:
+  samvada-net:
+    driver: bridge

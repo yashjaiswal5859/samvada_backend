@@ -1,0 +1,15 @@
+apiVersion: v2
+name: samvada-platform
+description: Production Helm chart for Samvada Voice AI Platform (Auth, ABS, Reporting Engine, S2S Engine, NGINX Gateway)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - voice-ai
+  - microservices
+  - speech-to-speech
+  - clickhouse
+  - kafka
+maintainers:
+  - name: Core Engineering Team
+    email: dev@samvada.ai

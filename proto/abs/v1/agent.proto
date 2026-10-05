@@ -1,0 +1,62 @@
+// =============================================================================
+// Samvada Platform — Agent Runtime gRPC Contract
+// =============================================================================
+// Package: abs.v1
+// Service: AgentRuntimeService
+// Served By: ABS (Application & Billing Service) on port :9082
+// Consumed By: S2S Engine (Speech-to-Speech) on port :9084
+//
+// Description:
+//   This contract enables the S2S engine to fetch live agent configuration
+//   and perform call authorization checks at call setup time.
+// =============================================================================
+
+syntax = "proto3";
+
+package abs.v1;
+
+option go_package = "github.com/samvada/proto/gen/go/abs/v1;absv1";
+
+// AgentRuntimeService is served by ABS and called by the S2S Engine
+// at call initialization to load prompt/voice settings and verify quotas.
+service AgentRuntimeService {
+    // S2S calls this immediately upon SIP/WebSocket connection to load agent instructions
+    rpc GetAgentRuntimeConfig(GetAgentRuntimeConfigRequest) returns (GetAgentRuntimeConfigResponse);
+    
+    // S2S checks if organization/workspace has quota and active wallet balance before answering/dialing
+    rpc CheckCallAuthorization(CheckCallAuthorizationRequest) returns (CheckCallAuthorizationResponse);
+}
+
+// Request to fetch complete agent runtime instructions
+message GetAgentRuntimeConfigRequest {
+    string agent_id = 1;
+    string workspace_id = 2;
+}
+
+// Full execution context needed by S2S worker
+message GetAgentRuntimeConfigResponse {
+    string agent_id = 1;
+    string name = 2;
+    string system_prompt = 3;
+    string voice_id = 4;
+    string voice_provider = 5;       // "elevenlabs", "cartesia", "azure", "openai"
+    string language = 6;             // e.g., "en-US", "hi-IN"
+    string model = 7;                // e.g., "gpt-4o", "claude-3-5-sonnet", "gemini-1.5-flash"
+    repeated string knowledge_base_ids = 8;
+    string tools_config_json = 9;    // Function calling / tool schemas in JSON
+}
+
+// Request to check authorization and balance
+message CheckCallAuthorizationRequest {
+    string workspace_id = 1;
+    string phone_number = 2;
+    string direction = 3;            // "inbound" or "outbound"
+}
+
+// Response indicating authorization status
+message CheckCallAuthorizationResponse {
+    bool is_authorized = 1;
+    string denial_reason = 2;        // "QUOTA_EXCEEDED", "WALLET_EXHAUSTED", "WORKSPACE_SUSPENDED", "DND_RESTRICTED"
+    int64 remaining_minutes = 3;
+    double current_wallet_balance_usd = 4;
+}

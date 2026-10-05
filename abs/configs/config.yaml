@@ -1,0 +1,48 @@
+app:
+  name: "samvada-abs"
+  env: "development"
+  http_port: 8082
+  grpc_port: 9082
+  log_level: "debug"
+
+database:
+  host: "localhost"
+  port: 5432
+  user: "samvada"
+  password: "samvada_dev_2026"
+  dbname: "samvada_abs"
+  sslmode: "disable"
+  max_open_conns: 100
+  max_idle_conns: 20
+  conn_max_lifetime_min: 60
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 1
+  pool_size: 50
+
+kafka:
+  brokers:
+    - "localhost:9092"
+  consumer_group: "samvada-abs-consumer"
+
+auth:
+  jwt_secret: "samvada_jwt_super_secret_dev_2026_key"
+  service_url: "http://localhost:8081"
+  grpc_address: "localhost:9081"
+
+s2s:
+  service_url: "http://localhost:8084"
+  grpc_address: "localhost:9084"
+
+reporting:
+  grpc_address: "localhost:9083"
+
+storage:
+  provider: "local"
+  local_path: "./storage_data"
+
+demo_credits:
+  initial_usd: 5.00
+  initial_minutes: 100

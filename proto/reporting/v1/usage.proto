@@ -1,0 +1,61 @@
+// =============================================================================
+// Samvada Platform — Usage Reporting gRPC Contract
+// =============================================================================
+// Package: reporting.v1
+// Service: UsageReportingService
+// Served By: Reporting Engine (RE / ClickHouse) on port :9083
+// Consumed By: ABS (Application & Billing Service) on port :9082
+//
+// Description:
+//   This contract enables ABS to retrieve aggregated telephony/AI usage
+//   metrics from ClickHouse for invoice finalization and dashboard display.
+// =============================================================================
+
+syntax = "proto3";
+
+package reporting.v1;
+
+option go_package = "github.com/samvada/proto/gen/go/reporting/v1;reportingv1";
+
+// UsageReportingService is served by the Reporting Engine and consumed by ABS.
+service UsageReportingService {
+    // ABS calls this during invoice finalization to calculate billing charges
+    rpc GetUsageSummary(GetUsageSummaryRequest) returns (GetUsageSummaryResponse);
+    
+    // ABS calls this to render current month usage progress bars in the dashboard
+    rpc GetCurrentMonthUsage(GetCurrentMonthUsageRequest) returns (GetCurrentMonthUsageResponse);
+}
+
+// Request for historical usage summary across a billing cycle
+message GetUsageSummaryRequest {
+    string org_id = 1;
+    string period_start = 2; // RFC3339 timestamp (e.g., "2026-09-01T00:00:00Z")
+    string period_end = 3;   // RFC3339 timestamp (e.g., "2026-09-30T23:59:59Z")
+}
+
+// Aggregated usage metrics from ClickHouse materialized views
+message GetUsageSummaryResponse {
+    int64 total_calls = 1;
+    int64 total_duration_seconds = 2;
+    int64 total_billable_seconds = 3;
+    double total_cost_telephony_usd = 4;
+    double total_cost_stt_usd = 5;
+    double total_cost_llm_usd = 6;
+    double total_cost_tts_usd = 7;
+    double total_spend_usd = 8;
+    map<string, int64> per_workspace_minutes = 9;
+}
+
+// Request for current month usage snapshot
+message GetCurrentMonthUsageRequest {
+    string org_id = 1;
+    string workspace_id = 2;
+}
+
+// Current month progress snapshot
+message GetCurrentMonthUsageResponse {
+    int64 minutes_used = 1;
+    int64 minutes_limit = 2;
+    double estimated_spend_usd = 3;
+    double percent_used = 4;
+}

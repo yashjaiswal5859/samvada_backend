@@ -1,0 +1,118 @@
+# =============================================================================
+# Samvada Platform — Helm Values Configuration (Staging & Production)
+# =============================================================================
+
+global:
+  environment: production
+  domain: samvada.ai
+
+# Microservice: Auth
+auth:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: samvada/auth-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8081
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# Microservice: Application & Billing Service (ABS)
+abs:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: samvada/abs-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    httpPort: 8082
+    grpcPort: 9082
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# Microservice: Reporting Engine (RE)
+reporting:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: samvada/reporting-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    httpPort: 8083
+    grpcPort: 9083
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# Microservice: Speech-to-Speech Engine (S2S)
+s2s:
+  enabled: true
+  replicaCount: 4
+  image:
+    repository: samvada/voice-agent-go
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8084
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  hpa:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: 80
+
+# API Gateway (NGINX)
+gateway:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: nginx
+    tag: alpine
+  service:
+    type: LoadBalancer
+    port: 80
+    targetPort: 8080
+
+# Ingress
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "s2s-service"
+  hosts:
+    - host: api.samvada.ai
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: samvada-tls-cert
+      hosts:
+        - api.samvada.ai
