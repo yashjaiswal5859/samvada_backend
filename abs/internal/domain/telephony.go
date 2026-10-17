@@ -13,13 +13,13 @@ import (
 
 type PhoneNumber struct {
 	ID              uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	WorkspaceID     uuid.UUID  `gorm:"type:uuid;not null;index:idx_phone_numbers_workspace" json:"workspace_id"`
+	WorkspaceID     *uuid.UUID `gorm:"type:uuid;index:idx_phone_numbers_workspace" json:"workspace_id,omitempty"`
 	PhoneNumber     string     `gorm:"type:varchar(50);uniqueIndex;not null" json:"phone_number"`
 	Type            string     `gorm:"type:varchar(50);default:'toll_free'" json:"type"` // toll_free, local, mobile
-	Provider        string     `gorm:"type:varchar(50);not null" json:"provider"`        // twilio, plivo, sip_trunk
+	Provider        string     `gorm:"type:varchar(50);not null" json:"provider"`        // twilio, plivo, sip_trunk, telnyx, bandwidth
 	CarrierSID      *string    `gorm:"column:carrier_sid;type:varchar(255)" json:"carrier_sid,omitempty"`
 	AssignedAgentID *uuid.UUID `gorm:"type:uuid;index:idx_phone_numbers_assigned_agent" json:"assigned_agent_id,omitempty"`
-	Status          string     `gorm:"type:varchar(50);default:'active'" json:"status"` // active, released, pending_verification
+	Status          string     `gorm:"type:varchar(50);default:'active'" json:"status"` // active, released, pending_verification, available, unassigned
 	MonthlyCostUSD  float64    `gorm:"type:numeric(10,4);default:1.00" json:"monthly_cost_usd"`
 	CreatedAt       time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 
@@ -36,7 +36,9 @@ type TelephonyRepository interface {
 	Create(ctx context.Context, pn *PhoneNumber) error
 	GetByID(ctx context.Context, workspaceID, id uuid.UUID) (*PhoneNumber, error)
 	GetByNumber(ctx context.Context, number string) (*PhoneNumber, error)
-	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*PhoneNumber, error)
+	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, search string) ([]*PhoneNumber, error)
+	ListAvailable(ctx context.Context, workspaceID *uuid.UUID, search string) ([]*PhoneNumber, error)
+	AllocateNumber(ctx context.Context, workspaceID, numberID uuid.UUID, agentID *uuid.UUID) (*PhoneNumber, error)
 	AssignAgent(ctx context.Context, workspaceID, id, agentID uuid.UUID) error
 	UnassignAgent(ctx context.Context, workspaceID, id uuid.UUID) error
 	Delete(ctx context.Context, workspaceID, id uuid.UUID) error

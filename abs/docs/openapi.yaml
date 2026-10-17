@@ -1,0 +1,1351 @@
+openapi: 3.0.3
+info:
+  title: Samvada AI — ABS Platform API
+  description: |
+    Production REST API specifications for the **Samvada AI Voice Platform (Application & Billing Service)**.
+    
+    This specification includes:
+    * **Admin Authentication & Ory Keto ReBAC**: Dedicated API-only admin login (`POST /api/v1/admin/login`) returning standard JWT access token and refresh token. Every administrative API call strictly enforces dual-token headers (`Authorization: Bearer <token>` and `X-Refresh-Token: <token>`) validated against Ory Keto ReBAC authorization policies.
+    * **Admin Catalog Bulk Upload**: Bulk uploading available Phone Numbers, STT models, TTS voices, and LLM conversation models in list format.
+    * **Catalog Discovery**: Dynamic model and phone number discovery for Voice Agent configuration.
+    * **Knowledge Base RAG**: Direct-to-S3 Presigned Uploads, Dynamic Quick Notes with zero ghost vectors, and sub-5ms HNSW Vector Search.
+  version: 2.1.0
+  contact:
+    name: Samvada Engineering Team
+    url: https://samvada.ai
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8082
+    description: Direct ABS Server (Local Dev)
+  - url: http://localhost:8080
+    description: NGINX API Gateway (Local Gateway)
+
+tags:
+  - name: Admin Auth
+    description: Administrator authentication via POST curl and ReBAC role verification
+  - name: Admin Catalog
+    description: Administrator bulk upload and management of available platform inventory (Phone numbers, STT, TTS, LLM models)
+  - name: Catalog Discovery
+    description: Public / Workspace model and telephony resource discovery
+  - name: Knowledge Base & RAG
+    description: Document ingestion, direct-to-S3 uploads, quick notes, and HNSW vector similarity search
+
+paths:
+  # ───────────────────────────────────────────────────────────────────────────
+  # ADMIN AUTHENTICATION (CURL / CLI ONLY)
+  # ───────────────────────────────────────────────────────────────────────────
+  /api/v1/admin/login:
+    post:
+      summary: Admin Login (API-Only)
+      description: |
+        Authenticates an administrator with username and password via curl/API.
+        Returns both JWT `access_token` and `refresh_token` (standard TTLs: 1h access, 24h refresh, unchanging).
+        Enforces and registers the special Admin role in Ory Keto ReBAC.
+        Both tokens must be provided on every subsequent admin API call:
+        - `Authorization: Bearer <access_token>`
+        - `X-Refresh-Token: <refresh_token>`
+      tags:
+        - Admin Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: "admin"
+                password:
+                  type: string
+                  format: password
+                  example: "SamvadaAdmin2026!"
+      responses:
+        200:
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  access_token:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  refresh_token:
+                    type: string
+                    example: "a7f3c8e4d2b1a9f0e8d7c6b5a4f3e2d1..."
+                  token_type:
+                    type: string
+                    example: "Bearer"
+                  expires_in:
+                    type: integer
+                    example: 3600
+        401:
+          description: Invalid admin credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/me:
+    get:
+      summary: Verify Admin Session & Keto Role
+      description: |
+        Verifies that both `Authorization: Bearer <access_token>` and `X-Refresh-Token: <refresh_token>`
+        are valid, and confirms that the caller holds the special Admin role in Ory Keto ReBAC.
+      tags:
+        - Admin Auth
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      responses:
+        200:
+          description: Admin session valid and Keto role verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  user_id:
+                    type: string
+                    example: "00000000-0000-0000-0000-000000000001"
+                  role:
+                    type: string
+                    example: "admin"
+                  keto_role_verified:
+                    type: boolean
+                    example: true
+        401:
+          description: Missing or invalid token(s)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        403:
+          description: Forbidden - lacks Admin role in Ory Keto ReBAC
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # ADMIN CATALOG — PHONE NUMBERS
+  # ───────────────────────────────────────────────────────────────────────────
+  /api/v1/admin/catalog/phone-numbers:
+    post:
+      summary: Bulk upload available phone numbers (Admin)
+      description: |
+        Uploads a list of available phone numbers into the platform inventory pool.
+        Numbers uploaded with no workspace context become available for organizations to assign to voice agents.
+        
+        **Idempotent**: Re-uploading an existing number safely updates its carrier and pricing metadata.
+      tags:
+        - Admin Catalog
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/PhoneNumberInput'
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/PhoneNumberInput'
+                    phone_numbers:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/PhoneNumberInput'
+            example:
+              - phone_number: "+12025550143"
+                provider: "twilio"
+                type: "local"
+                monthly_cost_usd: 1.50
+                region: "California"
+              - phone_number: "+918045678901"
+                provider: "plivo"
+                type: "toll_free"
+                monthly_cost_usd: 2.00
+                region: "Bengaluru"
+      responses:
+        '201':
+          description: Phone numbers successfully uploaded and synced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkUploadResponse'
+        '400':
+          description: Invalid payload or empty list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      summary: List inventory phone numbers (Admin)
+      description: Lists all available and platform-managed phone numbers with search filtering.
+      tags:
+        - Admin Catalog
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      parameters:
+        - name: search
+          in: query
+          description: Filter by phone number string or provider
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum items to return (default 100)
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: List of phone numbers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PhoneNumber'
+
+  /api/v1/admin/catalog/phone-numbers/{id}:
+    delete:
+      summary: Delete an inventory phone number (Admin)
+      description: Removes a phone number from the platform inventory.
+      tags:
+        - Admin Catalog
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Phone number UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Phone number removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      deleted:
+                        type: boolean
+                        example: true
+                      id:
+                        type: string
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # ADMIN CATALOG — AI MODELS (STT, TTS, LLM)
+  # ───────────────────────────────────────────────────────────────────────────
+  /api/v1/admin/catalog/models:
+    post:
+      summary: Bulk upload AI models across all categories (Admin)
+      description: |
+        Uploads or updates a list of models across any category (`stt`, `tts`, `llm`).
+        If a model ID already exists, it is updated in-place with the latest parameters.
+      tags:
+        - Admin Catalog
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/AIModelInput'
+            example:
+              - id: "deepgram"
+                category: "stt"
+                name: "Deepgram Nova-2"
+                provider: "deepgram"
+                note: "Recommended · streaming transcription"
+                is_recommended: true
+              - id: "gpt-4o-mini"
+                category: "llm"
+                name: "GPT-4o Mini"
+                provider: "openai"
+                note: "Recommended · ultra-low latency & cost"
+                is_recommended: true
+              - id: "fish-audio"
+                category: "tts"
+                name: "Fish Audio"
+                provider: "fish-audio"
+                note: "Recommended · expressive neural voice"
+                is_recommended: true
+      responses:
+        '201':
+          description: Models upserted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AIModel'
+
+  /api/v1/admin/catalog/stt:
+    post:
+      summary: Bulk upload STT models (Admin)
+      description: Specifically uploads a list of Speech-to-Text transcription models. Category is automatically set to `stt`.
+      tags:
+        - Admin Catalog
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/AIModelInput'
+            example:
+              - id: "deepgram"
+                name: "Deepgram Nova-2"
+                provider: "deepgram"
+                note: "Recommended · streaming transcription with keyterms"
+                is_recommended: true
+              - id: "google-speech"
+                name: "Google Cloud Speech-to-Text"
+                provider: "google"
+                note: "Multilingual enterprise speech recognition"
+                is_recommended: false
+              - id: "azure-speech"
+                name: "Azure AI Speech"
+                provider: "azure"
+                note: "High accuracy speech-to-text"
+                is_recommended: false
+      responses:
+        '201':
+          description: STT models upserted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AIModel'
+
+  /api/v1/admin/catalog/tts:
+    post:
+      summary: Bulk upload TTS models and voices (Admin)
+      description: Specifically uploads a list of Text-to-Speech synthesis engines. Category is automatically set to `tts`.
+      tags:
+        - Admin Catalog
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/AIModelInput'
+            example:
+              - id: "fish-audio"
+                name: "Fish Audio"
+                provider: "fish-audio"
+                note: "Recommended · expressive speech generation"
+                is_recommended: true
+              - id: "elevenlabs"
+                name: "ElevenLabs Multilingual v2"
+                provider: "elevenlabs"
+                note: "Hyper-realistic human voices"
+                is_recommended: false
+              - id: "cartesia"
+                name: "Cartesia Sonic"
+                provider: "cartesia"
+                note: "Sub-80ms low latency conversational speech"
+                is_recommended: false
+      responses:
+        '201':
+          description: TTS models upserted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AIModel'
+
+  /api/v1/admin/catalog/llm:
+    post:
+      summary: Bulk upload LLM models (Admin)
+      description: Specifically uploads a list of Large Language Models. Category is automatically set to `llm`.
+      tags:
+        - Admin Catalog
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/AIModelInput'
+            example:
+              - id: "gpt-4o-mini"
+                name: "GPT-4o Mini"
+                provider: "openai"
+                note: "Recommended · ultra low latency & optimal cost"
+                is_recommended: true
+              - id: "claude-3-5-haiku"
+                name: "Claude 3.5 Haiku"
+                provider: "anthropic"
+                note: "Fast concise model with superior reasoning"
+                is_recommended: false
+              - id: "gemini-1-5-flash"
+                name: "Gemini 1.5 Flash"
+                provider: "google"
+                note: "Multilingual and high token throughput"
+                is_recommended: false
+      responses:
+        '201':
+          description: LLM models upserted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AIModel'
+
+  /api/v1/admin/catalog/models/{id}:
+    delete:
+      summary: Delete an AI model from catalog (Admin)
+      description: Removes an STT, TTS, or LLM model from the active platform catalog.
+      tags:
+        - Admin Catalog
+      security:
+        - BearerAuth: []
+          RefreshTokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Model identifier slug
+          schema:
+            type: string
+            example: "whisper-large-v3"
+      responses:
+        '200':
+          description: Model removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      deleted:
+                        type: boolean
+                        example: true
+                      id:
+                        type: string
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # PUBLIC / WORKSPACE CATALOG DISCOVERY
+  # ───────────────────────────────────────────────────────────────────────────
+  /api/v1/catalog/models:
+    get:
+      summary: Get available models catalog
+      description: |
+        Returns active models grouped by category (`stt`, `tts`, `llm`) for the Agent Builder UI.
+        Use query parameter `?category=stt` to filter to a single category or `?flat=true` for a flat list.
+      tags:
+        - Catalog Discovery
+      parameters:
+        - name: category
+          in: query
+          description: Optional filter by category (stt, tts, llm)
+          schema:
+            type: string
+            enum: [stt, tts, llm]
+        - name: active_only
+          in: query
+          description: Return only active models (default true)
+          schema:
+            type: boolean
+            default: true
+        - name: flat
+          in: query
+          description: If true, returns a flat array instead of grouped map
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Available AI models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/GroupedModels'
+
+  /api/v1/catalog/phone-numbers:
+    get:
+      summary: Get available phone numbers
+      description: Lists all available platform phone numbers ready for assignment.
+      tags:
+        - Catalog Discovery
+      parameters:
+        - name: search
+          in: query
+          description: Search term (number or provider)
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Limit number of results
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: List of available phone numbers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PhoneNumber'
+
+  /api/v1/agents/builder-resources:
+    get:
+      summary: Consolidated Agent Builder Resources (Single Unified GET API)
+      description: |
+        Fetches all resources required by the New Agent builder wizard in a single, high-performance GET call.
+        Returns available phone numbers, dynamic models (STT, TTS, LLM), workspace knowledge bases, and workspace integrations.
+      tags:
+        - Catalog Discovery
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Workspace-ID
+          in: header
+          description: Active Workspace ID (or passed via path in scoped format)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Consolidated resources for agent builder
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/AgentBuilderResources'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # KNOWLEDGE BASE & RAG PIPELINE
+  # ───────────────────────────────────────────────────────────────────────────
+  /api/v1/workspaces/{ws_id}/kb:
+    get:
+      summary: List Knowledge Base Folders (Lightweight Folder Metadata)
+      description: |
+        Retrieves all knowledge base folders in the workspace with folder metadata:
+        `folder_id`, `folder_name`, `doc_count`, `created_at`, `updated_at`.
+        
+        **Note**: Document payloads are strictly excluded from this folder listing endpoint.
+        Documents are only retrieved when opening a folder via `GET /api/v1/workspaces/{ws_id}/kb/{id}/documents`.
+      tags:
+        - Knowledge Base & RAG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ws_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of knowledge base folders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KnowledgeBase'
+
+    post:
+      summary: Create Knowledge Base Folder
+      description: Creates a new empty knowledge base folder in the workspace.
+      tags:
+        - Knowledge Base & RAG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ws_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: "Product Knowledge"
+                description:
+                  type: string
+                  example: "Product manuals and troubleshooting guides"
+      responses:
+        '201':
+          description: Knowledge base folder created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/KnowledgeBase'
+
+  /api/v1/workspaces/{ws_id}/kb/{id}/documents:
+    get:
+      summary: List Documents in Knowledge Base Folder
+      description: |
+        Fetches all document records residing within a specific knowledge base folder when opened.
+      tags:
+        - Knowledge Base & RAG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ws_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of documents in folder
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KBDocument'
+
+  /api/v1/workspaces/{ws_id}/kb/{id}/documents/presign-upload:
+    post:
+      summary: Generate direct S3 Presigned Upload URL
+      description: |
+        Generates a direct-to-S3 presigned PUT upload URL with a 15-minute TTL.
+        Large PDF documents bypass the API Gateway and are uploaded directly to MinIO/S3.
+      tags:
+        - Knowledge Base & RAG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ws_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_name]
+              properties:
+                file_name:
+                  type: string
+                  example: "clinic_handbook.pdf"
+      responses:
+        '200':
+          description: Presigned upload details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PresignedUploadResponse'
+
+  /api/v1/workspaces/{ws_id}/kb/{id}/documents/complete:
+    post:
+      summary: Confirm document upload and trigger Docling Kafka indexing
+      description: |
+        Notifies ABS that the client has completed the direct S3 PUT upload.
+        ABS performs **anti-spoofing verification** (`StatObject`) to confirm the object exists and respects the 15MB limit, creates the document record, and publishes an ingest event to Kafka `kb.documents.ingest`.
+      tags:
+        - Knowledge Base & RAG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ws_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_id, file_name, s3_key]
+              properties:
+                document_id:
+                  type: string
+                  format: uuid
+                file_name:
+                  type: string
+                s3_key:
+                  type: string
+      responses:
+        '200':
+          description: Document record initialized and queued for indexing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/KBDocument'
+
+  /api/v1/workspaces/{ws_id}/kb/{id}/note:
+    put:
+      summary: Save or update dynamic Quick Notes (Zero Ghost Vectors)
+      description: |
+        Saves or updates custom business rules and dynamic notes for a Knowledge Base.
+        Atomically purges prior embeddings and inserts fresh vectors to guarantee **zero ghost vectors**.
+      tags:
+        - Knowledge Base & RAG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ws_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  example: "Dr. Dave is away on leave until Friday. Reschedule his routine appointments for Monday."
+      responses:
+        '200':
+          description: Quick notes updated and vectorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/KBDocument'
+
+    get:
+      summary: Get active Quick Notes for Knowledge Base
+      tags:
+        - Knowledge Base & RAG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ws_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Quick notes content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/KBDocument'
+
+  /api/v1/workspaces/{ws_id}/kb/search:
+    post:
+      summary: Sub-5ms HNSW Vector Similarity Search
+      description: |
+        Executes real-time vector similarity search over Knowledge Base chunks using PostgreSQL `pgvector` HNSW cosine indexing.
+        Multi-tenant isolation strictly restricts results to the specified workspace and active agent knowledge base IDs.
+      tags:
+        - Knowledge Base & RAG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: ws_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query, kb_ids]
+              properties:
+                query:
+                  type: string
+                  example: "What is the policy for rescheduling appointments?"
+                kb_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                limit:
+                  type: integer
+                  default: 3
+                  example: 3
+      responses:
+        '200':
+          description: Ranked vector search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KBSearchResult'
+
+# ───────────────────────────────────────────────────────────────────────────
+# SCHEMAS & COMPONENTS
+# ───────────────────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT Access Token. Passed as 'Authorization: Bearer <token>'."
+    RefreshTokenAuth:
+      type: apiKey
+      in: header
+      name: X-Refresh-Token
+      description: "Admin Refresh Token obtained via POST /api/v1/admin/login. Required for all Admin API operations alongside BearerAuth."
+
+  schemas:
+    PhoneNumberInput:
+      type: object
+      required:
+        - phone_number
+        - provider
+      properties:
+        phone_number:
+          type: string
+          example: "+12025550143"
+        provider:
+          type: string
+          enum: [twilio, plivo, sip_trunk, telnyx, bandwidth]
+          example: "twilio"
+        type:
+          type: string
+          enum: [local, toll_free, mobile]
+          default: "local"
+          example: "local"
+        monthly_cost_usd:
+          type: number
+          format: float
+          default: 1.00
+          example: 1.50
+        carrier_sid:
+          type: string
+          example: "PN123456789"
+        region:
+          type: string
+          example: "California"
+        country:
+          type: string
+          example: "US"
+
+    PhoneNumber:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        phone_number:
+          type: string
+          example: "+12025550143"
+        provider:
+          type: string
+          example: "twilio"
+        type:
+          type: string
+          example: "local"
+        status:
+          type: string
+          example: "available"
+        monthly_cost_usd:
+          type: number
+          example: 1.50
+        created_at:
+          type: string
+          format: date-time
+
+    AIModelInput:
+      type: object
+      required:
+        - id
+        - name
+        - provider
+      properties:
+        id:
+          type: string
+          example: "deepgram"
+        category:
+          type: string
+          enum: [stt, tts, llm]
+          example: "stt"
+        name:
+          type: string
+          example: "Deepgram Nova-2"
+        provider:
+          type: string
+          example: "deepgram"
+        note:
+          type: string
+          example: "Recommended · streaming transcription"
+        is_recommended:
+          type: boolean
+          default: false
+          example: true
+        is_active:
+          type: boolean
+          default: true
+          example: true
+        metadata:
+          type: object
+          example:
+            latency_ms: 65
+
+    AIModel:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "deepgram"
+        category:
+          type: string
+          example: "stt"
+        name:
+          type: string
+          example: "Deepgram Nova-2"
+        provider:
+          type: string
+          example: "deepgram"
+        note:
+          type: string
+          example: "Recommended · streaming transcription"
+        is_recommended:
+          type: boolean
+          example: true
+        is_active:
+          type: boolean
+          example: true
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    GroupedModels:
+      type: object
+      properties:
+        stt:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIModel'
+        tts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIModel'
+        llm:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIModel'
+
+    BulkUploadResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            total_processed:
+              type: integer
+              example: 2
+            inserted:
+              type: integer
+              example: 2
+            updated:
+              type: integer
+              example: 0
+            failed:
+              type: integer
+              example: 0
+            errors:
+              type: array
+              items:
+                type: string
+
+    PresignedUploadResponse:
+      type: object
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        s3_key:
+          type: string
+          example: "workspaces/f3.../kb/d1.../doc.pdf"
+        upload_url:
+          type: string
+          example: "http://localhost:9002/samvada-kb/workspaces/..."
+        expires_in_seconds:
+          type: integer
+          example: 900
+
+    KBDocument:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kb_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "clinic_handbook.pdf"
+        doc_type:
+          type: string
+          example: "file"
+        source_url_or_path:
+          type: string
+        size_bytes:
+          type: integer
+          example: 1048576
+        status:
+          type: string
+          example: "indexing"
+        chunk_count:
+          type: integer
+          example: 12
+        created_at:
+          type: string
+          format: date-time
+
+    KBSearchResult:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+          format: uuid
+        kb_id:
+          type: string
+          format: uuid
+        document_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          example: "Dr. Dave is away on leave until Friday."
+        similarity:
+          type: number
+          format: float
+          example: 0.9124
+
+    KnowledgeBase:
+      type: object
+      description: Knowledge base folder entity. Documents are strictly omitted from folder listings to avoid payload bloat, and retrieved on demand via /kb/{id}/documents.
+      properties:
+        folder_id:
+          type: string
+          format: uuid
+          description: Alias for folder ID
+          example: "7d78ab28-f1bf-49cc-911d-430bd1cc6474"
+        folder_name:
+          type: string
+          description: Display name of the folder
+          example: "Customer Support FAQ"
+        doc_count:
+          type: integer
+          description: Dynamic count of documents inside this folder
+          example: 5
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Customer Support FAQ"
+        description:
+          type: string
+          example: "Company policies and refund guidelines"
+        document_count:
+          type: integer
+          example: 5
+        chunk_count:
+          type: integer
+          example: 48
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ConnectorIntegration:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          example: "hubspot"
+        name:
+          type: string
+          example: "HubSpot CRM"
+        is_connected:
+          type: boolean
+          example: true
+        credentials_json:
+          type: string
+          example: "{}"
+
+    AgentBuilderPhoneNumbers:
+      type: object
+      properties:
+        available:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhoneNumber'
+        assigned:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhoneNumber'
+
+    AgentBuilderResources:
+      type: object
+      properties:
+        phone_numbers:
+          $ref: '#/components/schemas/AgentBuilderPhoneNumbers'
+        stt:
+          type: array
+          description: Available Speech-to-Text transcription models
+          items:
+            $ref: '#/components/schemas/AIModel'
+        tts:
+          type: array
+          description: Available Text-to-Speech voice synthesis models
+          items:
+            $ref: '#/components/schemas/AIModel'
+        llm:
+          type: array
+          description: Available Large Language Models for conversation
+          items:
+            $ref: '#/components/schemas/AIModel'
+        knowledge_bases:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgeBase'
+        integrations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorIntegration'
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "INVALID_FORMAT"
+            message:
+              type: string
+              example: "Payload must be a JSON array of items"

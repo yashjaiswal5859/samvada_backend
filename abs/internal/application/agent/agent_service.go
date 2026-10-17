@@ -26,6 +26,7 @@ type CreateAgentRequest struct {
 	VoiceName       string         `json:"voice_name"`
 	Language        string         `json:"language"`
 	Model           string         `json:"model"`
+	Status          string         `json:"status,omitempty"`
 	AssignedPhone   *string        `json:"assigned_phone,omitempty"`
 	ToolsConfig     datatypes.JSON `json:"tools_config"`
 	CreatedByUserID uuid.UUID      `json:"-"`
@@ -105,6 +106,11 @@ func (s *agentService) CreateAgent(
 		model = "gemini-2.5-flash"
 	}
 
+	status := req.Status
+	if status == "" {
+		status = "active"
+	}
+
 	agentID := uuid.New()
 	ag := &domain.Agent{
 		ID:               agentID,
@@ -119,7 +125,7 @@ func (s *agentService) CreateAgent(
 		VoiceName:        voiceName,
 		Language:         lang,
 		Model:            model,
-		Status:           "draft",
+		Status:           status,
 		ActiveVersionNum: 1,
 		AssignedPhone:    req.AssignedPhone,
 		CreatedAt:        time.Now().UTC(),
@@ -215,6 +221,26 @@ func (s *agentService) UpdateAgent(
 		ag.Status = *req.Status
 	}
 	ag.UpdatedAt = time.Now().UTC()
+
+	if req.ToolsConfig != nil {
+		latest, lErr := s.agentRepo.GetLatestVersion(ctx, id)
+		if lErr == nil && latest != nil {
+			latest.ToolsConfig = *req.ToolsConfig
+			if req.SystemPrompt != nil {
+				latest.SystemPrompt = *req.SystemPrompt
+			}
+			if req.Model != nil {
+				latest.Model = *req.Model
+			}
+			if req.VoiceID != nil {
+				latest.VoiceID = *req.VoiceID
+			}
+			if req.Language != nil {
+				latest.Language = *req.Language
+			}
+			_ = s.agentRepo.UpdateVersion(ctx, latest)
+		}
+	}
 
 	if err := s.agentRepo.Update(ctx, ag); err != nil {
 		return nil, err

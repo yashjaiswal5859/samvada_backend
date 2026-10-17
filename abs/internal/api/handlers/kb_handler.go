@@ -46,6 +46,9 @@ func (h *KBHandler) CreateKB(c *gin.Context) {
 		return
 	}
 
+	knowledgeBase.Documents = nil
+	knowledgeBase.PopulateFolderAliases()
+
 	RespondSuccess(c, http.StatusCreated, knowledgeBase)
 }
 
@@ -60,6 +63,11 @@ func (h *KBHandler) ListKBs(c *gin.Context) {
 	if err != nil {
 		RespondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
+	}
+
+	for _, kb := range kbs {
+		kb.Documents = nil
+		kb.PopulateFolderAliases()
 	}
 
 	RespondSuccess(c, http.StatusOK, kbs)
@@ -83,6 +91,9 @@ func (h *KBHandler) GetKB(c *gin.Context) {
 		RespondError(c, http.StatusNotFound, "KB_NOT_FOUND", err.Error())
 		return
 	}
+
+	knowledgeBase.Documents = nil
+	knowledgeBase.PopulateFolderAliases()
 
 	RespondSuccess(c, http.StatusOK, knowledgeBase)
 }
@@ -221,4 +232,153 @@ func (h *KBHandler) SyncKB(c *gin.Context) {
 	}
 
 	RespondSuccess(c, http.StatusOK, gin.H{"synced": true, "kb_id": kbID})
+}
+
+func (h *KBHandler) PresignUpload(c *gin.Context) {
+	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
+		return
+	}
+
+	kbID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_KB_ID", "Invalid KB UUID")
+		return
+	}
+
+	var req struct {
+		FileName string `json:"file_name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
+	res, err := h.kbService.PresignDocumentUpload(c.Request.Context(), wsID, kbID, req.FileName)
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "PRESIGN_FAILED", err.Error())
+		return
+	}
+
+	RespondSuccess(c, http.StatusOK, res)
+}
+
+func (h *KBHandler) CompleteUpload(c *gin.Context) {
+	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
+		return
+	}
+
+	kbID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_KB_ID", "Invalid KB UUID")
+		return
+	}
+
+	var req struct {
+		DocumentID uuid.UUID `json:"document_id" binding:"required"`
+		FileName   string    `json:"file_name" binding:"required"`
+		S3Key      string    `json:"s3_key" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
+	doc, err := h.kbService.CompleteDocumentUpload(c.Request.Context(), wsID, kbID, req.DocumentID, req.FileName, req.S3Key)
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "VERIFICATION_FAILED", err.Error())
+		return
+	}
+
+	RespondSuccess(c, http.StatusCreated, doc)
+}
+
+func (h *KBHandler) SaveNote(c *gin.Context) {
+	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
+		return
+	}
+
+	kbID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_KB_ID", "Invalid KB UUID")
+		return
+	}
+
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
+	doc, err := h.kbService.SaveNote(c.Request.Context(), wsID, kbID, req.Content)
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, "NOTE_SAVE_FAILED", err.Error())
+		return
+	}
+
+	RespondSuccess(c, http.StatusOK, gin.H{"saved": true, "note": doc})
+}
+
+func (h *KBHandler) GetNote(c *gin.Context) {
+	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
+		return
+	}
+
+	kbID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_KB_ID", "Invalid KB UUID")
+		return
+	}
+
+	doc, err := h.kbService.GetNote(c.Request.Context(), wsID, kbID)
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, "NOTE_FETCH_FAILED", err.Error())
+		return
+	}
+
+	content := ""
+	if doc != nil {
+		content = doc.SourceURLOrPath
+	}
+
+	RespondSuccess(c, http.StatusOK, gin.H{"content": content, "note": doc})
+}
+
+func (h *KBHandler) SearchKB(c *gin.Context) {
+	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
+		return
+	}
+
+	var req struct {
+		KBIDs []uuid.UUID `json:"kb_ids" binding:"required"`
+		Query string      `json:"query" binding:"required"`
+		Limit int         `json:"limit"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
+	results, err := h.kbService.SearchKnowledge(c.Request.Context(), wsID, req.KBIDs, req.Query, req.Limit)
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, "SEARCH_FAILED", err.Error())
+		return
+	}
+
+	RespondSuccess(c, http.StatusOK, gin.H{
+		"query":   req.Query,
+		"count":   len(results),
+		"results": results,
+	})
 }

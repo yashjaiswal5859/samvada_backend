@@ -4,7 +4,11 @@
 
 package dto
 
-import "time"
+import (
+	"time"
+
+	"github.com/samvada/abs/internal/domain"
+)
 
 type APIResponse struct {
 	Success       bool        `json:"success"`
@@ -50,16 +54,94 @@ type CreateWorkspaceRequest struct {
 }
 
 type CreateAgentRequest struct {
-	Name          string  `json:"name" binding:"required,min=2,max=100"`
-	Role          string  `json:"role" binding:"required"`
-	Description   *string `json:"description,omitempty"`
-	SystemPrompt  string  `json:"system_prompt" binding:"required"`
-	VoiceID       string  `json:"voice_id" binding:"required"`
-	VoiceProvider string  `json:"voice_provider"`
-	VoiceName     string  `json:"voice_name"`
-	Language      string  `json:"language"`
-	Model         string  `json:"model"`
-	AssignedPhone *string `json:"assigned_phone,omitempty"`
+	Name                  string                 `json:"name"`
+	Role                  string                 `json:"role"`
+	Description           *string                `json:"description,omitempty"`
+	SystemPrompt          string                 `json:"system_prompt"`
+	SystemPromptAlt       string                 `json:"systemPrompt,omitempty"`
+	VoiceID               string                 `json:"voice_id"`
+	VoiceIDAlt            string                 `json:"voiceId,omitempty"`
+	VoiceProvider         string                 `json:"voice_provider"`
+	VoiceProviderAlt      string                 `json:"voiceProvider,omitempty"`
+	VoiceName             string                 `json:"voice_name"`
+	VoiceNameAlt          string                 `json:"voiceName,omitempty"`
+	Language              string                 `json:"language"`
+	Model                 string                 `json:"model"`
+	Status                string                 `json:"status,omitempty"`
+	AssignedPhone         *string                `json:"assigned_phone,omitempty"`
+	PhoneNumberID         *string                `json:"phoneNumberId,omitempty"`
+	PhoneNumberIDAlt      *string                `json:"phone_number_id,omitempty"`
+	KnowledgeBaseIDs      []string               `json:"knowledgeBaseIds,omitempty"`
+	KnowledgeBaseIDsAlt   []string               `json:"knowledge_base_ids,omitempty"`
+	ToolAllowlist         []string               `json:"toolAllowlist,omitempty"`
+	EscalationPhoneNumber *string                `json:"escalationPhoneNumber,omitempty"`
+	GreetingText          *string                `json:"greetingText,omitempty"`
+	InboundGreeting       *string                `json:"inboundGreeting,omitempty"`
+	OutboundGreeting      *string                `json:"outboundGreeting,omitempty"`
+	GreetingMode          *string                `json:"greetingMode,omitempty"`
+	CallDirection         *string                `json:"callDirection,omitempty"`
+	PrimaryLanguage       *string                `json:"primaryLanguage,omitempty"`
+	AdditionalLanguages   []string               `json:"additionalLanguages,omitempty"`
+	SupportedLanguages    []string               `json:"supportedLanguages,omitempty"`
+	TelephonyProvider     *string                `json:"telephonyProvider,omitempty"`
+	STTProvider           *string                `json:"sttProvider,omitempty"`
+	TTSProvider           *string                `json:"ttsProvider,omitempty"`
+	STTKeyterms           []string               `json:"sttKeyterms,omitempty"`
+	SpeakingRate          *float64               `json:"speakingRate,omitempty"`
+	PauseBeforeSpeakingMs *int                   `json:"pauseBeforeSpeakingMs,omitempty"`
+	AllowInterruptions    *bool                  `json:"allowInterruptions,omitempty"`
+	SilenceBehavior       *string                `json:"silenceBehavior,omitempty"`
+	SilenceTimeoutSeconds *int                   `json:"silenceTimeoutSeconds,omitempty"`
+	VoiceBehavior         interface{}            `json:"voiceBehavior,omitempty"`
+	Guardrails            interface{}            `json:"guardrails,omitempty"`
+	ComplianceFlags       interface{}            `json:"complianceFlags,omitempty"`
+}
+
+type UpdateAgentRequest struct {
+	Name                  *string     `json:"name,omitempty"`
+	Role                  *string     `json:"role,omitempty"`
+	Description           *string     `json:"description,omitempty"`
+	AvatarURL             *string     `json:"avatar_url,omitempty"`
+	AvatarURLAlt          *string     `json:"avatar,omitempty"`
+	SystemPrompt          *string     `json:"system_prompt,omitempty"`
+	SystemPromptAlt       *string     `json:"systemPrompt,omitempty"`
+	VoiceID               *string     `json:"voice_id,omitempty"`
+	VoiceIDAlt            *string     `json:"voiceId,omitempty"`
+	VoiceProvider         *string     `json:"voice_provider,omitempty"`
+	VoiceProviderAlt      *string     `json:"voiceProvider,omitempty"`
+	VoiceName             *string     `json:"voice_name,omitempty"`
+	VoiceNameAlt          *string     `json:"voiceName,omitempty"`
+	Language              *string     `json:"language,omitempty"`
+	Model                 *string     `json:"model,omitempty"`
+	Status                *string     `json:"status,omitempty"`
+	AssignedPhone         *string     `json:"assigned_phone,omitempty"`
+	PhoneNumber           *string     `json:"phoneNumber,omitempty"`
+	PhoneNumberID         *string     `json:"phoneNumberId,omitempty"`
+	PhoneNumberIDAlt      *string     `json:"phone_number_id,omitempty"`
+	KnowledgeBaseIDs      []string    `json:"knowledgeBaseIds,omitempty"`
+	KnowledgeBaseIDsAlt   []string    `json:"knowledge_base_ids,omitempty"`
+	ToolAllowlist         []string    `json:"toolAllowlist,omitempty"`
+	EscalationPhoneNumber *string     `json:"escalationPhoneNumber,omitempty"`
+	GreetingText          *string     `json:"greetingText,omitempty"`
+	InboundGreeting       *string     `json:"inboundGreeting,omitempty"`
+	OutboundGreeting      *string     `json:"outboundGreeting,omitempty"`
+	GreetingMode          *string     `json:"greetingMode,omitempty"`
+	CallDirection         *string     `json:"callDirection,omitempty"`
+	PrimaryLanguage       *string     `json:"primaryLanguage,omitempty"`
+	AdditionalLanguages   []string    `json:"additionalLanguages,omitempty"`
+	SupportedLanguages    []string    `json:"supportedLanguages,omitempty"`
+	TelephonyProvider     *string     `json:"telephonyProvider,omitempty"`
+	STTProvider           *string     `json:"sttProvider,omitempty"`
+	TTSProvider           *string     `json:"ttsProvider,omitempty"`
+	STTKeyterms           []string    `json:"sttKeyterms,omitempty"`
+	SpeakingRate          *float64    `json:"speakingRate,omitempty"`
+	PauseBeforeSpeakingMs *int        `json:"pauseBeforeSpeakingMs,omitempty"`
+	AllowInterruptions    *bool       `json:"allowInterruptions,omitempty"`
+	SilenceBehavior       *string     `json:"silenceBehavior,omitempty"`
+	SilenceTimeoutSeconds *int        `json:"silenceTimeoutSeconds,omitempty"`
+	VoiceBehavior         interface{} `json:"voiceBehavior,omitempty"`
+	Guardrails            interface{} `json:"guardrails,omitempty"`
+	ComplianceFlags       interface{} `json:"complianceFlags,omitempty"`
 }
 
 type TopUpRequest struct {
@@ -113,3 +195,21 @@ type OnboardingStateResponse struct {
 	DemoCreditsUSD      float64          `json:"demo_credits_usd,omitempty"`
 	RemainingMinutes    int              `json:"remaining_minutes,omitempty"`
 }
+
+// AgentBuilderPhoneNumbers groups available and assigned numbers for agent allocation
+type AgentBuilderPhoneNumbers struct {
+	Available []*domain.PhoneNumber `json:"available"`
+	Assigned  []*domain.PhoneNumber `json:"assigned"`
+}
+
+// AgentBuilderResourcesResponse consolidates all resources needed to build or configure an agent
+type AgentBuilderResourcesResponse struct {
+	PhoneNumbers   AgentBuilderPhoneNumbers      `json:"phone_numbers"`
+	STT            []*domain.AIModel             `json:"stt"`
+	TTS            []*domain.AIModel             `json:"tts"`
+	LLM            []*domain.AIModel             `json:"llm"`
+	KnowledgeBases []*domain.KnowledgeBase       `json:"knowledge_bases"`
+	Integrations   []domain.ConnectorIntegration `json:"integrations"`
+}
+
+

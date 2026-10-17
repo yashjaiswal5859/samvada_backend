@@ -47,6 +47,9 @@ func (r *agentRepo) GetByID(ctx context.Context, workspaceID, id uuid.UUID) (*do
 func (r *agentRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*domain.Agent, error) {
 	var agents []*domain.Agent
 	err := r.db.WithContext(ctx).
+		Preload("Versions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("version_num DESC")
+		}).
 		Where("workspace_id = ?", workspaceID).
 		Order("created_at DESC").
 		Find(&agents).Error
@@ -83,6 +86,10 @@ func (r *agentRepo) CreateVersion(ctx context.Context, version *domain.AgentVers
 		version.ID = uuid.New()
 	}
 	return r.db.WithContext(ctx).Create(version).Error
+}
+
+func (r *agentRepo) UpdateVersion(ctx context.Context, version *domain.AgentVersion) error {
+	return r.db.WithContext(ctx).Save(version).Error
 }
 
 func (r *agentRepo) GetVersion(ctx context.Context, agentID uuid.UUID, versionNumber int) (*domain.AgentVersion, error) {

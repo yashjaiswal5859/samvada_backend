@@ -8,9 +8,13 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
+
+	"gorm.io/datatypes"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -19,7 +23,12 @@ import (
 	"github.com/samvada/abs/internal/api/middleware"
 	"github.com/samvada/abs/internal/application/agent"
 	"github.com/samvada/abs/internal/application/billing"
+	"github.com/samvada/abs/internal/application/catalog"
+	"github.com/samvada/abs/internal/application/integration"
+	"github.com/samvada/abs/internal/application/kb"
+	"github.com/samvada/abs/internal/application/telephony"
 	"github.com/samvada/abs/internal/application/workspace"
+	"github.com/samvada/abs/internal/domain"
 	infraredis "github.com/samvada/abs/internal/infrastructure/redis"
 )
 
@@ -27,6 +36,10 @@ type AgentHandler struct {
 	agentService     agent.AgentService
 	workspaceService workspace.WorkspaceService
 	walletService    billing.WalletService
+	catalogService   catalog.CatalogService
+	kbService        kb.KBService
+	connectorService *integration.ConnectorService
+	telephonyService telephony.TelephonyService
 	redisClient      *infraredis.Client
 	ticketSecret     []byte
 }
@@ -50,6 +63,20 @@ func NewAgentHandler(
 	}
 }
 
+func (h *AgentHandler) SetBuilderDependencies(
+	catalogService catalog.CatalogService,
+	kbService kb.KBService,
+	connectorService *integration.ConnectorService,
+	telephonyService telephony.TelephonyService,
+) *AgentHandler {
+	h.catalogService = catalogService
+	h.kbService = kbService
+	h.connectorService = connectorService
+	h.telephonyService = telephonyService
+	return h
+}
+
+
 func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
 	if err != nil {
@@ -66,6 +93,65 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		return
 	}
 
+	// 1. Resolve aliases between camelCase and snake_case
+	if req.VoiceID == "" && req.VoiceIDAlt != "" {
+		req.VoiceID = req.VoiceIDAlt
+	}
+	if req.VoiceProvider == "" && req.VoiceProviderAlt != "" {
+		req.VoiceProvider = req.VoiceProviderAlt
+	}
+	if req.VoiceName == "" && req.VoiceNameAlt != "" {
+		req.VoiceName = req.VoiceNameAlt
+	}
+	if req.SystemPrompt == "" && req.SystemPromptAlt != "" {
+		req.SystemPrompt = req.SystemPromptAlt
+	}
+	if req.PhoneNumberID == nil && req.PhoneNumberIDAlt != nil {
+		req.PhoneNumberID = req.PhoneNumberIDAlt
+	}
+
+	// 2. Intelligent defaults
+	if req.Name == "" {
+		req.Name = "AI Voice Assistant"
+	}
+	if req.Role == "" {
+		req.Role = "Customer Support Specialist"
+	}
+	if req.SystemPrompt == "" {
+		desc := ""
+		if req.Description != nil && *req.Description != "" {
+			desc = " " + *req.Description
+		}
+		req.SystemPrompt = fmt.Sprintf("You are %s, a warm and efficient %s.%s Respond to caller requests clearly, empathetically, and concisely.", req.Name, req.Role, desc)
+	}
+	if req.VoiceID == "" {
+		req.VoiceID = "fish-swara-hi-en"
+	}
+	if req.VoiceProvider == "" {
+		req.VoiceProvider = "fish-audio"
+	}
+	if req.Language == "" {
+		req.Language = "en-IN"
+	}
+	if req.Model == "" {
+		req.Model = "gpt-4o-mini"
+	}
+
+	// 3. Resolve Phone Number from ID if passed
+	if req.AssignedPhone == nil && req.PhoneNumberID != nil && *req.PhoneNumberID != "" {
+		if pnID, parseErr := uuid.Parse(*req.PhoneNumberID); parseErr == nil && h.telephonyService != nil {
+			if pn, pnErr := h.telephonyService.GetNumber(c.Request.Context(), wsID, pnID); pnErr == nil && pn != nil {
+				req.AssignedPhone = &pn.PhoneNumber
+			}
+		}
+	}
+
+	reqJSON, _ := json.Marshal(req)
+	var toolsCfg datatypes.JSON
+	if len(reqJSON) > 0 {
+		toolsCfg = datatypes.JSON(reqJSON)
+	}
+
 	ag, err := h.agentService.CreateAgent(c.Request.Context(), wsID, agent.CreateAgentRequest{
 		Name:            req.Name,
 		Role:            req.Role,
@@ -76,12 +162,21 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		VoiceName:       req.VoiceName,
 		Language:        req.Language,
 		Model:           req.Model,
+		Status:          req.Status,
 		AssignedPhone:   req.AssignedPhone,
+		ToolsConfig:     toolsCfg,
 		CreatedByUserID: userID,
 	})
 	if err != nil {
 		RespondError(c, http.StatusInternalServerError, "AGENT_CREATION_FAILED", err.Error())
 		return
+	}
+
+	// 4. Bind phone number to agent in telephony repository if requested
+	if req.PhoneNumberID != nil && *req.PhoneNumberID != "" && h.telephonyService != nil {
+		if pnID, parseErr := uuid.Parse(*req.PhoneNumberID); parseErr == nil {
+			_ = h.telephonyService.AssignAgent(c.Request.Context(), wsID, pnID, ag.ID)
+		}
 	}
 
 	RespondSuccess(c, http.StatusCreated, ag)
@@ -119,6 +214,92 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 	ag, err := h.agentService.GetAgent(c.Request.Context(), wsID, agentID)
 	if err != nil {
 		RespondError(c, http.StatusNotFound, "AGENT_NOT_FOUND", err.Error())
+		return
+	}
+
+	RespondSuccess(c, http.StatusOK, ag)
+}
+
+func (h *AgentHandler) UpdateAgent(c *gin.Context) {
+	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
+		return
+	}
+
+	agentID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_AGENT_ID", "Invalid agent UUID format")
+		return
+	}
+
+	var req dto.UpdateAgentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
+	// 1. Resolve aliases between camelCase and snake_case
+	if req.SystemPrompt == nil && req.SystemPromptAlt != nil {
+		req.SystemPrompt = req.SystemPromptAlt
+	}
+	if req.VoiceID == nil && req.VoiceIDAlt != nil {
+		req.VoiceID = req.VoiceIDAlt
+	}
+	if req.VoiceProvider == nil && req.VoiceProviderAlt != nil {
+		req.VoiceProvider = req.VoiceProviderAlt
+	}
+	if req.VoiceName == nil && req.VoiceNameAlt != nil {
+		req.VoiceName = req.VoiceNameAlt
+	}
+	if req.AvatarURL == nil && req.AvatarURLAlt != nil {
+		req.AvatarURL = req.AvatarURLAlt
+	}
+	if req.AssignedPhone == nil && req.PhoneNumber != nil {
+		req.AssignedPhone = req.PhoneNumber
+	}
+
+	// 2. Resolve phone number from ID if provided
+	if req.PhoneNumberID != nil && *req.PhoneNumberID != "" && h.telephonyService != nil {
+		if pnID, parseErr := uuid.Parse(*req.PhoneNumberID); parseErr == nil {
+			if pn, pnErr := h.telephonyService.GetNumber(c.Request.Context(), wsID, pnID); pnErr == nil && pn != nil {
+				req.AssignedPhone = &pn.PhoneNumber
+			}
+			_ = h.telephonyService.AssignAgent(c.Request.Context(), wsID, pnID, agentID)
+		}
+	}
+
+	// 3. Serialize update payload for tools_config in latest version
+	reqJSON, _ := json.Marshal(req)
+	var toolsCfg *datatypes.JSON
+	if len(reqJSON) > 0 {
+		tc := datatypes.JSON(reqJSON)
+		toolsCfg = &tc
+	}
+
+	ag, err := h.agentService.UpdateAgent(c.Request.Context(), wsID, agentID, agent.UpdateAgentRequest{
+		Name:          req.Name,
+		Role:          req.Role,
+		Description:   req.Description,
+		AvatarURL:     req.AvatarURL,
+		SystemPrompt:  req.SystemPrompt,
+		VoiceID:       req.VoiceID,
+		VoiceProvider: req.VoiceProvider,
+		VoiceName:     req.VoiceName,
+		Language:      req.Language,
+		Model:         req.Model,
+		AssignedPhone: req.AssignedPhone,
+		Status:        req.Status,
+		ToolsConfig:   toolsCfg,
+	})
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, "UPDATE_FAILED", err.Error())
+		return
+	}
+
+	updatedAg, gErr := h.agentService.GetAgent(c.Request.Context(), wsID, agentID)
+	if gErr == nil && updatedAg != nil {
+		RespondSuccess(c, http.StatusOK, updatedAg)
 		return
 	}
 
@@ -275,3 +456,153 @@ func (h *AgentHandler) MintTestToken(c *gin.Context) {
 		"agent_id":             agentIDStr,
 	})
 }
+
+// GetBuilderResources handles GET /api/v1/agents/builder-resources
+// Consolidates dynamic models, available phone numbers, workspace knowledge bases,
+// and workspace integrations into a single atomic GET response.
+func (h *AgentHandler) GetBuilderResources(c *gin.Context) {
+	wsIDStr := middleware.GetWorkspaceID(c)
+	if wsIDStr == "" {
+		wsIDStr = c.GetHeader("X-Workspace-ID")
+	}
+	if wsIDStr == "" {
+		wsIDStr = c.Param("workspace_id")
+	}
+	if wsIDStr == "" {
+		wsIDStr = c.Query("workspace_id")
+	}
+
+	var wsID uuid.UUID
+	if wsIDStr != "" {
+		wsID, _ = uuid.Parse(wsIDStr)
+	}
+
+	ctx := c.Request.Context()
+
+	res := dto.AgentBuilderResourcesResponse{
+		PhoneNumbers: dto.AgentBuilderPhoneNumbers{
+			Available: make([]*domain.PhoneNumber, 0),
+			Assigned:  make([]*domain.PhoneNumber, 0),
+		},
+		STT:            make([]*domain.AIModel, 0),
+		TTS:            make([]*domain.AIModel, 0),
+		LLM:            make([]*domain.AIModel, 0),
+		KnowledgeBases: make([]*domain.KnowledgeBase, 0),
+		Integrations:   make([]domain.ConnectorIntegration, 0),
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// 1. Fetch AI Models (partitioned into separate STT, TTS, LLM)
+	if h.catalogService != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			models, err := h.catalogService.ListModelsGrouped(ctx, "", true)
+			if err == nil && models != nil {
+				mu.Lock()
+				if stt, ok := models["stt"]; ok && stt != nil {
+					res.STT = stt
+				}
+				if tts, ok := models["tts"]; ok && tts != nil {
+					res.TTS = tts
+				}
+				if llm, ok := models["llm"]; ok && llm != nil {
+					res.LLM = llm
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+
+	// 2. Fetch Phone Numbers (partitioned into available and assigned)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		availableMap := make(map[uuid.UUID]*domain.PhoneNumber)
+		assignedMap := make(map[uuid.UUID]*domain.PhoneNumber)
+
+		// 2.1 Workspace numbers (assigned vs unassigned)
+		if h.telephonyService != nil && wsID != uuid.Nil {
+			if wsNumbers, err := h.telephonyService.ListWorkspaceNumbers(ctx, wsID, ""); err == nil {
+				for _, pn := range wsNumbers {
+					if pn == nil {
+						continue
+					}
+					if pn.AssignedAgentID != nil || pn.Status == "assigned" {
+						assignedMap[pn.ID] = pn
+					} else {
+						availableMap[pn.ID] = pn
+					}
+				}
+			}
+		}
+
+		// 2.2 Platform inventory available numbers
+		if h.catalogService != nil {
+			if catalogNumbers, err := h.catalogService.ListAvailablePhoneNumbers(ctx, "", 100); err == nil {
+				for _, pn := range catalogNumbers {
+					if pn == nil {
+						continue
+					}
+					if pn.AssignedAgentID != nil || pn.Status == "assigned" {
+						assignedMap[pn.ID] = pn
+					} else {
+						if _, alreadyAssigned := assignedMap[pn.ID]; !alreadyAssigned {
+							availableMap[pn.ID] = pn
+						}
+					}
+				}
+			}
+		}
+
+		availableList := make([]*domain.PhoneNumber, 0, len(availableMap))
+		for _, pn := range availableMap {
+			availableList = append(availableList, pn)
+		}
+
+		assignedList := make([]*domain.PhoneNumber, 0, len(assignedMap))
+		for _, pn := range assignedMap {
+			assignedList = append(assignedList, pn)
+		}
+
+		mu.Lock()
+		res.PhoneNumbers.Available = availableList
+		res.PhoneNumbers.Assigned = assignedList
+		mu.Unlock()
+	}()
+
+	// 3. Fetch Knowledge Bases for workspace
+	if h.kbService != nil && wsID != uuid.Nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			kbs, err := h.kbService.ListKBs(ctx, wsID)
+			if err == nil && kbs != nil {
+				mu.Lock()
+				res.KnowledgeBases = kbs
+				mu.Unlock()
+			}
+		}()
+	}
+
+	// 4. Fetch Integrations for workspace
+	if h.connectorService != nil && wsID != uuid.Nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ints, err := h.connectorService.ListIntegrations(ctx, wsID)
+			if err == nil && ints != nil {
+				mu.Lock()
+				res.Integrations = ints
+				mu.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	RespondSuccess(c, http.StatusOK, res)
+}
+

@@ -19,6 +19,8 @@ type Storage interface {
 	Upload(ctx context.Context, key string, data []byte, contentType string) (string, error)
 	Download(ctx context.Context, key string) ([]byte, error)
 	GetPresignedURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+	GetPresignedUploadURL(ctx context.Context, key string, contentType string, ttl time.Duration) (string, error)
+	StatObject(ctx context.Context, key string) (int64, string, error)
 	Delete(ctx context.Context, key string) error
 }
 
@@ -70,6 +72,19 @@ func (s *LocalStorage) Download(ctx context.Context, key string) ([]byte, error)
 func (s *LocalStorage) GetPresignedURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	// For local storage, returns the direct serving URL
 	return fmt.Sprintf("%s/storage/%s", s.baseURL, key), nil
+}
+
+func (s *LocalStorage) GetPresignedUploadURL(ctx context.Context, key string, contentType string, ttl time.Duration) (string, error) {
+	return fmt.Sprintf("%s/storage/%s", s.baseURL, key), nil
+}
+
+func (s *LocalStorage) StatObject(ctx context.Context, key string) (int64, string, error) {
+	filePath := filepath.Join(s.baseDir, filepath.FromSlash(key))
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return 0, "", err
+	}
+	return info.Size(), "application/pdf", nil
 }
 
 func (s *LocalStorage) Delete(ctx context.Context, key string) error {

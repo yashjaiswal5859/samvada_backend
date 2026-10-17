@@ -25,7 +25,7 @@ type Agent struct {
 	VoiceName        string    `gorm:"type:varchar(100);not null" json:"voice_name"`
 	Language         string    `gorm:"type:varchar(50);default:'en-US'" json:"language"`
 	Model            string    `gorm:"type:varchar(100);default:'gemini-2.5-flash'" json:"model"`
-	Status           string    `gorm:"type:varchar(50);default:'draft'" json:"status"` // draft, active, archived
+	Status           string    `gorm:"type:varchar(50);default:'active'" json:"status"` // active, draft, archived
 	ActiveVersionNum int       `gorm:"default:1" json:"active_version_num"`
 	AssignedPhone    *string   `gorm:"type:varchar(50)" json:"assigned_phone,omitempty"`
 	CreatedAt        time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
@@ -70,6 +70,7 @@ type AgentRepository interface {
 	CountByWorkspace(ctx context.Context, workspaceID uuid.UUID) (int64, error)
 
 	CreateVersion(ctx context.Context, version *AgentVersion) error
+	UpdateVersion(ctx context.Context, version *AgentVersion) error
 	GetVersion(ctx context.Context, agentID uuid.UUID, versionNum int) (*AgentVersion, error)
 	ListVersions(ctx context.Context, agentID uuid.UUID) ([]*AgentVersion, error)
 	GetLatestVersion(ctx context.Context, agentID uuid.UUID) (*AgentVersion, error)

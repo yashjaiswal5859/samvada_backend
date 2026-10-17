@@ -27,6 +27,9 @@ type RouterDependencies struct {
 	NotificationHandler *handlers.NotificationHandler
 	ConnectorHandler    *handlers.ConnectorHandler
 	AuditHandler        *handlers.AuditHandler
+	CatalogHandler      *handlers.CatalogHandler
+	AdminHandler        *handlers.AdminHandler
+	AdminAuthMW         *middleware.AdminAuthMiddleware
 	RDB                 *redis.Client
 }
 
@@ -37,8 +40,65 @@ func RegisterAPIRoutes(r *gin.Engine, deps RouterDependencies) {
 	r.Use(middleware.RateLimit(deps.RDB, 120))
 	r.Use(middleware.RequestBodyLimit(middleware.DefaultBodyLimit))
 
+	// Live Swagger UI & OpenAPI 3.0 Documentation
+	r.StaticFile("/swagger", "./docs/swagger-ui.html")
+	r.StaticFile("/docs", "./docs/swagger-ui.html")
+	r.StaticFile("/docs/openapi.yaml", "./docs/openapi.yaml")
+
 	v1 := r.Group("/api/v1")
 	{
+		// ---------------------------------------------------------------------
+		// 0. AI Model Catalog & Phone Number Inventory (Public / Tenant Discovery)
+		// ---------------------------------------------------------------------
+		if deps.CatalogHandler != nil {
+			catalogGroup := v1.Group("/catalog")
+			{
+				catalogGroup.GET("/models", deps.CatalogHandler.ListModels)
+				catalogGroup.GET("/phone-numbers", deps.CatalogHandler.ListPhoneNumbers)
+			}
+		}
+
+		// ---------------------------------------------------------------------
+		// 0.1 Administrator Operations (API Only, Dual-Token & Ory Keto ReBAC)
+		// ---------------------------------------------------------------------
+		admin := v1.Group("/admin")
+		{
+			// Admin Login (API POST curl with username & password) -> returns JWT + Refresh Token
+			if deps.AdminHandler != nil {
+				admin.POST("/login", deps.AdminHandler.Login)
+			}
+
+			// Protected Admin Endpoints: Require both Bearer JWT + X-Refresh-Token and Keto ReBAC Admin Role
+			var adminProtected *gin.RouterGroup
+			if deps.AdminAuthMW != nil {
+				adminProtected = admin.Group("", deps.AdminAuthMW.RequireAdminKeto())
+			} else {
+				adminProtected = admin.Group("", deps.AuthMW.RequireAuth())
+			}
+
+			if deps.AdminHandler != nil {
+				adminProtected.GET("/me", deps.AdminHandler.Me)
+			}
+
+			if deps.CatalogHandler != nil {
+				adminCatalog := adminProtected.Group("/catalog")
+				{
+					// Bulk upload phone numbers in list format
+					adminCatalog.POST("/phone-numbers", deps.CatalogHandler.UploadPhoneNumbers)
+					adminCatalog.GET("/phone-numbers", deps.CatalogHandler.ListPhoneNumbers)
+					adminCatalog.DELETE("/phone-numbers/:id", deps.CatalogHandler.DeletePhoneNumber)
+
+					// Bulk upload AI models in list format
+					adminCatalog.POST("/models", deps.CatalogHandler.UploadModels)
+					adminCatalog.POST("/stt", deps.CatalogHandler.UploadSTTModels)
+					adminCatalog.POST("/tts", deps.CatalogHandler.UploadTTSModels)
+					adminCatalog.POST("/llm", deps.CatalogHandler.UploadLLMModels)
+					adminCatalog.GET("/models", deps.CatalogHandler.ListModels)
+					adminCatalog.DELETE("/models/:id", deps.CatalogHandler.DeleteModel)
+				}
+			}
+		}
+
 		// ---------------------------------------------------------------------
 		// 1. Onboarding Pipeline (Authenticated)
 		// ---------------------------------------------------------------------
@@ -106,7 +166,10 @@ func RegisterAPIRoutes(r *gin.Engine, deps RouterDependencies) {
 			{
 				agents.POST("", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.AgentHandler.CreateAgent)
 				agents.GET("", deps.AgentHandler.ListAgents)
+				agents.GET("/builder-resources", deps.AgentHandler.GetBuilderResources)
 				agents.GET("/:id", deps.AgentHandler.GetAgent)
+				agents.PATCH("/:id", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.AgentHandler.UpdateAgent)
+				agents.PUT("/:id", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.AgentHandler.UpdateAgent)
 				agents.POST("/:id/publish", middleware.RequireMinWorkspaceRole(middleware.RoleAdmin), deps.AgentHandler.PublishVersion)
 				agents.GET("/:id/versions", deps.AgentHandler.ListVersions)
 				agents.POST("/:id/rollback", middleware.RequireMinWorkspaceRole(middleware.RoleAdmin), deps.AgentHandler.RollbackVersion)
@@ -141,8 +204,13 @@ func RegisterAPIRoutes(r *gin.Engine, deps RouterDependencies) {
 				kb.DELETE("/:id", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.KBHandler.DeleteKB)
 				kb.POST("/:id/documents", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), middleware.RequestBodyLimit(middleware.UploadBodyLimit), deps.KBHandler.AddDocument)
 				kb.POST("/:id/documents/upload", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), middleware.RequestBodyLimit(middleware.UploadBodyLimit), deps.KBHandler.UploadDocument)
+				kb.POST("/:id/documents/presign-upload", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.KBHandler.PresignUpload)
+				kb.POST("/:id/documents/complete", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.KBHandler.CompleteUpload)
+				kb.PUT("/:id/note", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.KBHandler.SaveNote)
+				kb.GET("/:id/note", deps.KBHandler.GetNote)
 				kb.GET("/:id/documents", deps.KBHandler.ListDocuments)
 				kb.DELETE("/:id/documents/:doc_id", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.KBHandler.DeleteDocument)
+				kb.POST("/search", deps.KBHandler.SearchKB)
 				kb.POST("/:id/sync", middleware.RequireMinWorkspaceRole(middleware.RoleOperator), deps.KBHandler.SyncKB)
 			}
 

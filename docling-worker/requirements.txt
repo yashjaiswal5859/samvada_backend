@@ -1,0 +1,10 @@
+kafka-python-ng>=2.2.2
+minio>=7.2.5
+psycopg2-binary>=2.9.9
+pgvector>=0.2.5
+pydantic>=2.6.4
+sentence-transformers>=2.2.0
+pypdf>=4.0.0
+docling>=2.0.0
+docling-core>=2.0.0
+

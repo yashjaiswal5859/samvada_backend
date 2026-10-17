@@ -18,11 +18,14 @@ import (
 )
 
 type TelephonyService interface {
-	ListWorkspaceNumbers(ctx context.Context, workspaceID uuid.UUID) ([]*domain.PhoneNumber, error)
+	ListWorkspaceNumbers(ctx context.Context, workspaceID uuid.UUID, search string) ([]*domain.PhoneNumber, error)
+	ListAvailableNumbersFromDB(ctx context.Context, workspaceID *uuid.UUID, search string) ([]*domain.PhoneNumber, error)
+	AllocateNumberFromDB(ctx context.Context, workspaceID, numberID uuid.UUID, agentID *uuid.UUID) (*domain.PhoneNumber, error)
 	GetNumber(ctx context.Context, workspaceID, id uuid.UUID) (*domain.PhoneNumber, error)
+	GetByNumber(ctx context.Context, number string) (*domain.PhoneNumber, error)
 	SearchAvailableNumbers(ctx context.Context, provider, country, areaCode, numType string, limit int) ([]infraTelephony.AvailableNumber, error)
 	PurchaseNumber(ctx context.Context, workspaceID uuid.UUID, provider, phoneNumber, webhookURL string) (*domain.PhoneNumber, error)
-	ProvisionNumber(ctx context.Context, workspaceID uuid.UUID, number, provider, numType string) (*domain.PhoneNumber, error)
+	ProvisionNumber(ctx context.Context, workspaceID uuid.UUID, number, provider, numType string, assignedAgentID *uuid.UUID) (*domain.PhoneNumber, error)
 	AssignAgent(ctx context.Context, workspaceID, id, agentID uuid.UUID) error
 	UnassignAgent(ctx context.Context, workspaceID, id uuid.UUID) error
 	ReleaseNumber(ctx context.Context, workspaceID, id uuid.UUID) error
@@ -60,12 +63,24 @@ func (s *telephonyService) getCarrier(provider string) infraTelephony.CarrierAda
 	return adapter
 }
 
-func (s *telephonyService) ListWorkspaceNumbers(ctx context.Context, workspaceID uuid.UUID) ([]*domain.PhoneNumber, error) {
-	return s.telephonyRepo.ListByWorkspace(ctx, workspaceID)
+func (s *telephonyService) ListWorkspaceNumbers(ctx context.Context, workspaceID uuid.UUID, search string) ([]*domain.PhoneNumber, error) {
+	return s.telephonyRepo.ListByWorkspace(ctx, workspaceID, search)
+}
+
+func (s *telephonyService) ListAvailableNumbersFromDB(ctx context.Context, workspaceID *uuid.UUID, search string) ([]*domain.PhoneNumber, error) {
+	return s.telephonyRepo.ListAvailable(ctx, workspaceID, search)
+}
+
+func (s *telephonyService) AllocateNumberFromDB(ctx context.Context, workspaceID, numberID uuid.UUID, agentID *uuid.UUID) (*domain.PhoneNumber, error) {
+	return s.telephonyRepo.AllocateNumber(ctx, workspaceID, numberID, agentID)
 }
 
 func (s *telephonyService) GetNumber(ctx context.Context, workspaceID, id uuid.UUID) (*domain.PhoneNumber, error) {
 	return s.telephonyRepo.GetByID(ctx, workspaceID, id)
+}
+
+func (s *telephonyService) GetByNumber(ctx context.Context, number string) (*domain.PhoneNumber, error) {
+	return s.telephonyRepo.GetByNumber(ctx, number)
 }
 
 func (s *telephonyService) SearchAvailableNumbers(
@@ -96,7 +111,7 @@ func (s *telephonyService) PurchaseNumber(
 		return nil, err
 	}
 
-	pn.WorkspaceID = workspaceID
+	pn.WorkspaceID = &workspaceID
 	if err := s.telephonyRepo.Create(ctx, pn); err != nil {
 		s.log.Error("Failed to persist purchased phone number", zap.Error(err))
 		return nil, err
@@ -114,6 +129,7 @@ func (s *telephonyService) ProvisionNumber(
 	ctx context.Context,
 	workspaceID uuid.UUID,
 	number, provider, numType string,
+	assignedAgentID *uuid.UUID,
 ) (*domain.PhoneNumber, error) {
 	if provider == "" {
 		provider = "twilio"
@@ -123,14 +139,15 @@ func (s *telephonyService) ProvisionNumber(
 	}
 
 	pn := &domain.PhoneNumber{
-		ID:             uuid.New(),
-		WorkspaceID:    workspaceID,
-		PhoneNumber:    number,
-		Type:           numType,
-		Provider:       provider,
-		Status:         "active",
-		MonthlyCostUSD: 1.00,
-		CreatedAt:      time.Now().UTC(),
+		ID:              uuid.New(),
+		WorkspaceID:     &workspaceID,
+		PhoneNumber:     number,
+		Type:            numType,
+		Provider:        provider,
+		AssignedAgentID: assignedAgentID,
+		Status:          "active",
+		MonthlyCostUSD:  1.00,
+		CreatedAt:       time.Now().UTC(),
 	}
 
 	if err := s.telephonyRepo.Create(ctx, pn); err != nil {

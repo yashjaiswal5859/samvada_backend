@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"syscall"
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,9 +28,11 @@ import (
 	"github.com/samvada/abs/internal/api/handlers"
 	"github.com/samvada/abs/internal/api/middleware"
 	"github.com/samvada/abs/internal/api/routes"
+	"github.com/samvada/abs/internal/application/admin"
 	"github.com/samvada/abs/internal/application/agent"
 	"github.com/samvada/abs/internal/application/billing"
 	"github.com/samvada/abs/internal/application/campaign"
+	"github.com/samvada/abs/internal/application/catalog"
 	"github.com/samvada/abs/internal/application/kb"
 	"github.com/samvada/abs/internal/application/organization"
 	"github.com/samvada/abs/internal/application/telephony"
@@ -42,6 +45,7 @@ import (
 	"github.com/samvada/abs/internal/grpc/client"
 	"github.com/samvada/abs/internal/grpc/server"
 	"github.com/samvada/abs/internal/infrastructure/kafka"
+	"github.com/samvada/abs/internal/infrastructure/keto"
 	"github.com/samvada/abs/internal/infrastructure/postgres"
 	"github.com/samvada/abs/internal/infrastructure/postgres/repos"
 	"github.com/samvada/abs/internal/infrastructure/redis"
@@ -99,6 +103,28 @@ func main() {
 		log.Fatal("Failed to initialize local storage", zap.Error(err))
 	}
 
+	var appStorage storage.Storage = localStorage
+	if cfg.Storage.Provider == "s3" {
+		s3Store, s3Err := storage.NewS3Storage(
+			cfg.Storage.S3Endpoint,
+			cfg.Storage.S3Bucket,
+			cfg.Storage.S3AccessKey,
+			cfg.Storage.S3SecretKey,
+			cfg.Storage.S3PublicURL,
+			cfg.Storage.S3UseSSL,
+			log,
+		)
+		if s3Err != nil {
+			log.Warn("Failed to initialize S3 storage, falling back to local storage", zap.Error(s3Err))
+		} else {
+			appStorage = s3Store
+			log.Info("Initialized S3/MinIO storage for Knowledge Base",
+				zap.String("endpoint", cfg.Storage.S3Endpoint),
+				zap.String("bucket", cfg.Storage.S3Bucket),
+			)
+		}
+	}
+
 	// 4. Setup Gin HTTP Server
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -127,9 +153,10 @@ func main() {
 	notificationRepo := repos.NewNotificationRepository(db)
 	connectorRepo := repos.NewConnectorRepository(db)
 	auditRepo := repos.NewAuditRepository(db)
+	catalogRepo := repos.NewCatalogRepository(db)
 
 	// 6. Initialize Storage & Async Workers
-	docProcessor := kb.NewDocumentProcessor(kbRepo, localStorage, log, 4)
+	docProcessor := kb.NewDocumentProcessor(kbRepo, appStorage, log, 4)
 	docProcessor.Start(context.Background())
 
 	// 6.1 Initialize Telephony Carrier Adapters
@@ -164,7 +191,10 @@ func main() {
 	subService := billing.NewSubscriptionService(billingRepo, orgRepo, paymentGateways, log)
 	meteringService := billing.NewUsageMeteringService(billingRepo, reportingClient, log)
 	invoiceService := billing.NewInvoiceService(billingRepo, orgRepo, reportingClient, paymentGateways, localStorage, log)
-	kbService := kb.NewKBService(kbRepo, localStorage, docProcessor, log)
+	kbService := kb.NewKBService(kbRepo, appStorage, docProcessor, log)
+	if kafkaProducer != nil {
+		kbService.SetKafkaProducer(kafkaProducer)
+	}
 	campaignService := campaign.NewCampaignService(campaignRepo, log)
 	telephonyService := telephony.NewTelephonyService(telephonyRepo, carriers, log)
 	integrationService := webhook.NewIntegrationService(integrationRepo, log)
@@ -172,11 +202,19 @@ func main() {
 	notificationService := notification.NewNotificationService(notificationRepo, log)
 	connectorService := connectorApp.NewConnectorService(connectorRepo, log)
 	auditService := audit.NewAuditService(auditRepo, log)
+	catalogService := catalog.NewCatalogService(catalogRepo, log)
+
+	// 6.2 Initialize Keto ReBAC & Admin Services
+	ketoClient := keto.NewKetoClient(cfg.Keto.ReadURL, cfg.Keto.WriteURL, log)
+	adminService := admin.NewAdminService(cfg, ketoClient, rdb, log)
+	adminHandler := handlers.NewAdminHandler(adminService)
+	adminAuthMW := middleware.NewAdminAuthMiddleware(adminService, ketoClient, cfg.Auth.JWTSecret, authMiddleware, log)
 
 	// 7. Initialize HTTP Handlers
 	orgHandler := handlers.NewOrgHandler(orgService, walletService, profileRepo)
 	wsHandler := handlers.NewWorkspaceHandler(wsService)
 	agentHandler := handlers.NewAgentHandler(agentService, wsService, walletService, rdb, cfg.Auth.JWTSecret)
+	agentHandler.SetBuilderDependencies(catalogService, kbService, connectorService, telephonyService)
 	billingHandler := handlers.NewBillingHandler(walletService, wsService, subService, meteringService, invoiceService)
 	kbHandler := handlers.NewKBHandler(kbService)
 	campaignHandler := handlers.NewCampaignHandler(campaignService)
@@ -186,6 +224,7 @@ func main() {
 	notificationHandler := handlers.NewNotificationHandler(notificationService, log)
 	connectorHandler := handlers.NewConnectorHandler(connectorService, log)
 	auditHandler := handlers.NewAuditHandler(auditService, log)
+	catalogHandler := handlers.NewCatalogHandler(catalogService)
 
 	// 8. Register All REST API Routes
 	routes.RegisterAPIRoutes(router, routes.RouterDependencies{
@@ -203,6 +242,9 @@ func main() {
 		NotificationHandler: notificationHandler,
 		ConnectorHandler:    connectorHandler,
 		AuditHandler:        auditHandler,
+		CatalogHandler:      catalogHandler,
+		AdminHandler:        adminHandler,
+		AdminAuthMW:         adminAuthMW,
 		RDB:                 rdb,
 	})
 
@@ -306,11 +348,53 @@ func printBanner(cfg *configs.Config, log *zap.Logger) {
 
 
 func corsMiddleware() gin.HandlerFunc {
+	allowedOriginsEnv := os.Getenv("ALLOWED_ORIGINS")
+	var allowedOrigins []string
+	if allowedOriginsEnv != "" {
+		for _, o := range strings.Split(allowedOriginsEnv, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	} else {
+		allowedOrigins = []string{
+			"http://localhost:5173",
+			"http://localhost:3000",
+			"http://127.0.0.1:5173",
+			"http://localhost:8080",
+		}
+	}
+
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Correlation-ID, X-Workspace-ID")
+		origin := c.Request.Header.Get("Origin")
+		allowOrigin := ""
+
+		if origin != "" {
+			for _, allowed := range allowedOrigins {
+				if allowed == "*" || strings.EqualFold(allowed, origin) {
+					allowOrigin = origin
+					break
+				}
+			}
+			// In non-production, allow localhost and 127.0.0.1 on any port for flexibility
+			if allowOrigin == "" && os.Getenv("APP_ENV") != "production" {
+				if strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:") {
+					allowOrigin = origin
+				}
+			}
+		}
+
+		if allowOrigin != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			c.Writer.Header().Set("Vary", "Origin")
+		} else if origin == "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Correlation-ID, X-Workspace-ID, X-Org-ID")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, PATCH, DELETE")
+		c.Writer.Header().Set("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)

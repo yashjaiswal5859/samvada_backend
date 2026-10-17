@@ -23,6 +23,8 @@ type Config struct {
 	Reporting   ReportingConfig   `yaml:"reporting"`
 	Storage     StorageConfig     `yaml:"storage"`
 	DemoCredits DemoCreditsConfig `yaml:"demo_credits"`
+	Keto        KetoConfig        `yaml:"keto"`
+	Admin       AdminConfig       `yaml:"admin"`
 }
 
 type AppConfig struct {
@@ -69,6 +71,17 @@ type AuthConfig struct {
 	GRPCAddress string `yaml:"grpc_address"`
 }
 
+type KetoConfig struct {
+	ReadURL  string `yaml:"read_url"`
+	WriteURL string `yaml:"write_url"`
+}
+
+type AdminConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	UserID   string `yaml:"user_id"`
+}
+
 type S2SConfig struct {
 	ServiceURL  string `yaml:"service_url"`
 	GRPCAddress string `yaml:"grpc_address"`
@@ -79,8 +92,14 @@ type ReportingConfig struct {
 }
 
 type StorageConfig struct {
-	Provider  string `yaml:"provider"`
-	LocalPath string `yaml:"local_path"`
+	Provider    string `yaml:"provider"`
+	LocalPath   string `yaml:"local_path"`
+	S3Endpoint  string `yaml:"s3_endpoint"`
+	S3Bucket    string `yaml:"s3_bucket"`
+	S3AccessKey string `yaml:"s3_access_key"`
+	S3SecretKey string `yaml:"s3_secret_key"`
+	S3PublicURL string `yaml:"s3_public_url"`
+	S3UseSSL    bool   `yaml:"s3_use_ssl"`
 }
 
 type DemoCreditsConfig struct {
@@ -122,9 +141,28 @@ func Load(path string) (*Config, error) {
 		Auth: AuthConfig{
 			JWTSecret: "samvada_jwt_super_secret_dev_2026_key",
 		},
+		Storage: StorageConfig{
+			Provider:    "s3",
+			LocalPath:   "./storage_data",
+			S3Endpoint:  "localhost:9002",
+			S3Bucket:    "samvada-kb",
+			S3AccessKey: "samvada_admin",
+			S3SecretKey: "samvada_storage_2026",
+			S3PublicURL: "http://localhost:9002/samvada-kb",
+			S3UseSSL:    false,
+		},
 		DemoCredits: DemoCreditsConfig{
 			InitialUSD:     5.00,
 			InitialMinutes: 100,
+		},
+		Keto: KetoConfig{
+			ReadURL:  "http://keto:4466",
+			WriteURL: "http://keto:4467",
+		},
+		Admin: AdminConfig{
+			Username: "admin",
+			Password: "SamvadaAdmin2026!",
+			UserID:   "00000000-0000-0000-0000-000000000001",
 		},
 	}
 
@@ -176,6 +214,49 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("JWT_SECRET"); v != "" {
 		cfg.Auth.JWTSecret = v
+	}
+	if v := os.Getenv("STORAGE_PROVIDER"); v != "" {
+		cfg.Storage.Provider = v
+	}
+	if v := os.Getenv("S3_ENDPOINT"); v != "" {
+		cfg.Storage.S3Endpoint = v
+	}
+	if v := os.Getenv("S3_BUCKET"); v != "" {
+		cfg.Storage.S3Bucket = v
+	}
+	if v := os.Getenv("S3_ACCESS_KEY"); v != "" {
+		cfg.Storage.S3AccessKey = v
+	}
+	if v := os.Getenv("S3_SECRET_KEY"); v != "" {
+		cfg.Storage.S3SecretKey = v
+	}
+	if v := os.Getenv("S3_PUBLIC_URL"); v != "" {
+		cfg.Storage.S3PublicURL = v
+	}
+	if v := os.Getenv("S3_USE_SSL"); v != "" {
+		cfg.Storage.S3UseSSL = v == "true" || v == "1"
+	}
+	if v := os.Getenv("KETO_READ_URL"); v != "" {
+		cfg.Keto.ReadURL = v
+	}
+	if v := os.Getenv("KETO_WRITE_URL"); v != "" {
+		cfg.Keto.WriteURL = v
+	}
+	if v := os.Getenv("ADMIN_USERNAME"); v != "" {
+		cfg.Admin.Username = v
+	}
+	if v := os.Getenv("ADMIN_PASSWORD"); v != "" {
+		cfg.Admin.Password = v
+	}
+	if v := os.Getenv("ADMIN_USER_ID"); v != "" {
+		cfg.Admin.UserID = v
+	}
+
+	// Production readiness validation
+	if cfg.App.Env == "production" {
+		if cfg.Auth.JWTSecret == "samvada_jwt_super_secret_dev_2026_key" || cfg.Auth.JWTSecret == "" {
+			return nil, fmt.Errorf("CRITICAL SECURITY ERROR: Cannot start in production with default or empty JWT_SECRET. Set JWT_SECRET environment variable")
+		}
 	}
 
 	return cfg, nil

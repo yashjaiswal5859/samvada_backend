@@ -35,6 +35,7 @@ COPY --from=builder /app/bin/abs-server /app/abs-server
 COPY --from=builder /app/bin/abs-worker /app/abs-worker
 COPY --from=builder /workspace/abs/configs /app/configs
 COPY --from=builder /workspace/abs/migrations /app/migrations
+COPY --from=builder /workspace/abs/docs /app/docs
 
 EXPOSE 8082 9082
 

@@ -15,7 +15,7 @@ services:
   # 1. PostgreSQL 16
   # ---------------------------------------------------------------------------
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: samvada-postgres
     restart: unless-stopped
     ports:
@@ -421,12 +421,26 @@ services:
       REDIS_ADDR: redis:6379
       KAFKA_BROKERS: kafka:9092
       HYDRA_JWKS_URL: http://hydra:4444/.well-known/jwks.json
+      STORAGE_PROVIDER: s3
+      S3_ENDPOINT: minio:9000
+      S3_BUCKET: samvada-kb
+      S3_ACCESS_KEY: samvada_admin
+      S3_SECRET_KEY: samvada_storage_2026
+      S3_PUBLIC_URL: http://localhost:9002/samvada-kb
+      S3_USE_SSL: "false"
+      KETO_READ_URL: http://keto:4466
+      KETO_WRITE_URL: http://keto:4467
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: SamvadaAdmin2026!
+      ADMIN_USER_ID: 00000000-0000-0000-0000-000000000001
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      keto:
         condition: service_healthy
     networks:
       - samvada-net
@@ -526,6 +540,40 @@ services:
       kafka:
         condition: service_healthy
       abs:
+        condition: service_started
+    networks:
+      - samvada-net
+
+  # ---------------------------------------------------------------------------
+  # 10b. Docling Python Ingestion & Vector Worker
+  # ---------------------------------------------------------------------------
+  docling-worker:
+    build:
+      context: .
+      dockerfile: docling-worker/Dockerfile
+    container_name: samvada-docling-worker
+    restart: unless-stopped
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC: kb.documents.ingest
+      KAFKA_DLQ_TOPIC: kb.documents.dlq
+      KAFKA_GROUP_ID: samvada-docling-workers
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: samvada_admin
+      MINIO_SECRET_KEY: samvada_storage_2026
+      MINIO_DEFAULT_BUCKET: samvada-kb
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: samvada_abs
+      DB_USER: samvada
+      DB_PASSWORD: samvada_dev_2026
+      EMBEDDING_MODEL: all-MiniLM-L6-v2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      minio:
         condition: service_started
     networks:
       - samvada-net

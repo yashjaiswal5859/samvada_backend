@@ -160,15 +160,20 @@ func (m *AuthMiddleware) refreshJWKS() error {
 // RequireAuth is a Gin middleware that enforces authentication on protected routes.
 func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Development bypass header (only permitted in non-production environments)
-		if m.appEnv == "development" {
-			if devUserID := c.GetHeader("X-Dev-User-ID"); devUserID != "" {
+		// 1. Development bypass header (strictly forbidden and blocked in production)
+		if devUserID := c.GetHeader("X-Dev-User-ID"); devUserID != "" {
+			if m.appEnv == "development" || m.appEnv == "local" || m.appEnv == "test" {
 				m.log.Debug("Dev user bypass active", zap.String("dev_user_id", devUserID))
 				c.Set(ContextUserIDKey, devUserID)
 				c.Set(ContextUserEmailKey, c.GetHeader("X-Dev-User-Email"))
 				c.Next()
 				return
 			}
+			m.log.Warn("SECURITY ALERT: X-Dev-User-ID header blocked in non-development environment",
+				zap.String("app_env", m.appEnv),
+				zap.String("client_ip", c.ClientIP()),
+				zap.String("path", c.Request.URL.Path),
+			)
 		}
 
 		// 2. Extract Bearer token from HttpOnly cookie or Authorization header

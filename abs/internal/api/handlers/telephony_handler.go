@@ -6,13 +6,13 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/samvada/abs/internal/api/middleware"
 	"github.com/samvada/abs/internal/application/telephony"
+	"github.com/samvada/abs/internal/domain"
 )
 
 type TelephonyHandler struct {
@@ -26,13 +26,33 @@ func NewTelephonyHandler(telephonyService telephony.TelephonyService) *Telephony
 }
 
 func (h *TelephonyHandler) ListNumbers(c *gin.Context) {
-	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
-	if err != nil {
-		RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
-		return
+	wsIDStr := middleware.GetWorkspaceID(c)
+	if wsIDStr == "" {
+		wsIDStr = c.GetHeader("X-Workspace-ID")
+	}
+	if wsIDStr == "" {
+		wsIDStr = c.Query("workspace_id")
 	}
 
-	numbers, err := h.telephonyService.ListWorkspaceNumbers(c.Request.Context(), wsID)
+	var wsID uuid.UUID
+	var err error
+	if wsIDStr != "" {
+		wsID, err = uuid.Parse(wsIDStr)
+		if err != nil {
+			RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
+			return
+		}
+	}
+
+	search := c.Query("search")
+	if search == "" {
+		search = c.Query("query")
+	}
+	if search == "" {
+		search = c.Query("q")
+	}
+
+	numbers, err := h.telephonyService.ListWorkspaceNumbers(c.Request.Context(), wsID, search)
 	if err != nil {
 		RespondError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -42,22 +62,33 @@ func (h *TelephonyHandler) ListNumbers(c *gin.Context) {
 }
 
 func (h *TelephonyHandler) SearchAvailableNumbers(c *gin.Context) {
-	provider := c.DefaultQuery("provider", "twilio")
-	country := c.DefaultQuery("country", "US")
-	areaCode := c.Query("area_code")
-	numType := c.DefaultQuery("type", "local")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	wsIDStr := middleware.GetWorkspaceID(c)
+	if wsIDStr == "" {
+		wsIDStr = c.GetHeader("X-Workspace-ID")
+	}
+	if wsIDStr == "" {
+		wsIDStr = c.Query("workspace_id")
+	}
+	var wsIDPtr *uuid.UUID
+	if wsID, err := uuid.Parse(wsIDStr); err == nil {
+		wsIDPtr = &wsID
+	}
 
-	numbers, err := h.telephonyService.SearchAvailableNumbers(c.Request.Context(), provider, country, areaCode, numType, limit)
+	search := c.Query("search")
+	if search == "" {
+		search = c.Query("query")
+	}
+	if search == "" {
+		search = c.Query("q")
+	}
+
+	numbers, err := h.telephonyService.ListAvailableNumbersFromDB(c.Request.Context(), wsIDPtr, search)
 	if err != nil {
-		RespondError(c, http.StatusInternalServerError, "SEARCH_FAILED", err.Error())
+		RespondError(c, http.StatusInternalServerError, "DB_SEARCH_FAILED", err.Error())
 		return
 	}
 
-	RespondSuccess(c, http.StatusOK, gin.H{
-		"provider": provider,
-		"numbers":  numbers,
-	})
+	RespondSuccess(c, http.StatusOK, numbers)
 }
 
 func (h *TelephonyHandler) PurchaseNumber(c *gin.Context) {
@@ -87,25 +118,57 @@ func (h *TelephonyHandler) PurchaseNumber(c *gin.Context) {
 }
 
 func (h *TelephonyHandler) ProvisionNumber(c *gin.Context) {
-	wsID, err := uuid.Parse(middleware.GetWorkspaceID(c))
+	wsIDStr := middleware.GetWorkspaceID(c)
+	if wsIDStr == "" {
+		wsIDStr = c.GetHeader("X-Workspace-ID")
+	}
+	if wsIDStr == "" {
+		wsIDStr = c.Query("workspace_id")
+	}
+	wsID, err := uuid.Parse(wsIDStr)
 	if err != nil {
 		RespondError(c, http.StatusBadRequest, "INVALID_WORKSPACE", "Valid workspace context required")
 		return
 	}
 
 	var req struct {
-		PhoneNumber string `json:"phone_number" binding:"required"`
-		Provider    string `json:"provider"`
-		Type        string `json:"type"`
+		PhoneNumberID   *uuid.UUID `json:"phone_number_id"`
+		PhoneNumber     string     `json:"phone_number"`
+		Provider        string     `json:"provider"`
+		Type            string     `json:"type"`
+		AssignedAgentID *uuid.UUID `json:"assigned_agent_id"`
+		AgentID         *uuid.UUID `json:"agent_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 
-	pn, err := h.telephonyService.ProvisionNumber(c.Request.Context(), wsID, req.PhoneNumber, req.Provider, req.Type)
-	if err != nil {
-		RespondError(c, http.StatusInternalServerError, "PROVISION_FAILED", err.Error())
+	agentID := req.AssignedAgentID
+	if agentID == nil {
+		agentID = req.AgentID
+	}
+
+	var pn *domain.PhoneNumber
+	if req.PhoneNumberID != nil && *req.PhoneNumberID != uuid.Nil {
+		pn, err = h.telephonyService.AllocateNumberFromDB(c.Request.Context(), wsID, *req.PhoneNumberID, agentID)
+		if err != nil {
+			RespondError(c, http.StatusBadRequest, "ALLOCATION_FAILED", "Selected phone number could not be allocated from database: "+err.Error())
+			return
+		}
+	} else if req.PhoneNumber != "" {
+		existing, err := h.telephonyService.GetByNumber(c.Request.Context(), req.PhoneNumber)
+		if err != nil || existing == nil {
+			RespondError(c, http.StatusBadRequest, "NUMBER_NOT_IN_DB", "User cannot write random numbers. You must select an existing number from our database inventory.")
+			return
+		}
+		pn, err = h.telephonyService.AllocateNumberFromDB(c.Request.Context(), wsID, existing.ID, agentID)
+		if err != nil {
+			RespondError(c, http.StatusBadRequest, "ALLOCATION_FAILED", "Failed to allocate number from database: "+err.Error())
+			return
+		}
+	} else {
+		RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", "Please select a phone number from the database")
 		return
 	}
 

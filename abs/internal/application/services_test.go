@@ -142,7 +142,7 @@ func TestCompleteEnterpriseOnboardingAndBillingLifecycle(t *testing.T) {
 		CreatedByUserID: userID,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "draft", ag.Status)
+	assert.Equal(t, "active", ag.Status)
 	assert.Equal(t, 1, ag.ActiveVersionNum)
 
 	// Publish Version 2
