@@ -14,6 +14,8 @@ package tests
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,21 +33,22 @@ import (
 	"github.com/samvada/abs/internal/api/middleware"
 )
 
-func setupPenTestRouter(jwtSecret string) *gin.Engine {
+func setupPenTestRouter() (*gin.Engine, *rsa.PrivateKey) {
 	gin.SetMode(gin.TestMode)
 	logger := zap.NewNop()
 
 	cfg := &configs.Config{
-		Auth: configs.AuthConfig{JWTSecret: jwtSecret},
-		App:  configs.AppConfig{Env: "production"}, // Production mode prevents dev header bypasses
+		App: configs.AppConfig{Env: "production"},
 	}
+
+	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	authMW := middleware.NewAuthMiddleware(cfg, logger)
+	authMW.SetTestPublicKey("pentest-key", &privKey.PublicKey)
 
 	r := gin.New()
 	r.Use(gin.Recovery())
 
 	// Protected Routes with Auth Middleware
-	authMW := middleware.NewAuthMiddleware(cfg, logger)
-
 	api := r.Group("/api/v1")
 	api.Use(authMW.RequireAuth())
 	{
@@ -128,10 +131,10 @@ func setupPenTestRouter(jwtSecret string) *gin.Engine {
 		}
 	}
 
-	return r
+	return r, privKey
 }
 
-func generatePenTestToken(secret string, userID, orgID, wsID uuid.UUID, role string, exp time.Duration) string {
+func generatePenTestToken(privKey *rsa.PrivateKey, userID, orgID, wsID uuid.UUID, role string, exp time.Duration) string {
 	claims := jwt.MapClaims{
 		"sub":          userID.String(),
 		"user_id":      userID.String(),
@@ -141,8 +144,9 @@ func generatePenTestToken(secret string, userID, orgID, wsID uuid.UUID, role str
 		"exp":          time.Now().Add(exp).Unix(),
 		"iat":          time.Now().Unix(),
 	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenStr, _ := tok.SignedString([]byte(secret))
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = "pentest-key"
+	tokenStr, _ := tok.SignedString(privKey)
 	return tokenStr
 }
 
@@ -150,15 +154,14 @@ func generatePenTestToken(secret string, userID, orgID, wsID uuid.UUID, role str
 // Test 1: Cross-Tenant Isolation Breach Prevention
 // -----------------------------------------------------------------------------
 func TestPenTest_CrossTenantIsolationBreach(t *testing.T) {
-	secret := "test-secret-key-32-bytes-secure!"
-	router := setupPenTestRouter(secret)
+	router, privKey := setupPenTestRouter()
 
 	tenantA_OrgID := uuid.New()
 	tenantA_WsID := uuid.New()
 	tenantB_WsID := uuid.New()
 
 	// Token generated legitimately for Tenant A
-	tokenA := generatePenTestToken(secret, uuid.New(), tenantA_OrgID, tenantA_WsID, "member", time.Hour)
+	tokenA := generatePenTestToken(privKey, uuid.New(), tenantA_OrgID, tenantA_WsID, "member", time.Hour)
 
 	// ATTACK: Tenant A attempts to access Tenant B's workspace agents
 	req, _ := http.NewRequest(http.MethodGet, "/api/v1/workspaces/"+tenantB_WsID.String()+"/agents", nil)
@@ -174,10 +177,9 @@ func TestPenTest_CrossTenantIsolationBreach(t *testing.T) {
 // Test 2: Wallet Tampering & Negative Balance Exploit Prevention
 // -----------------------------------------------------------------------------
 func TestPenTest_WalletNegativeBalanceExploit(t *testing.T) {
-	secret := "test-secret-key-32-bytes-secure!"
-	router := setupPenTestRouter(secret)
+	router, privKey := setupPenTestRouter()
 
-	token := generatePenTestToken(secret, uuid.New(), uuid.New(), uuid.New(), "owner", time.Hour)
+	token := generatePenTestToken(privKey, uuid.New(), uuid.New(), uuid.New(), "owner", time.Hour)
 
 	// ATTACK 1: Negative topup attempt (trying to drain or cause underflow)
 	negativeTopup, _ := json.Marshal(map[string]any{"amount": -500.0})
@@ -204,12 +206,11 @@ func TestPenTest_WalletNegativeBalanceExploit(t *testing.T) {
 // Test 3: JWT Signature Tampering & Expiration Rejection
 // -----------------------------------------------------------------------------
 func TestPenTest_JWTTamperingAndExpiry(t *testing.T) {
-	secret := "test-secret-key-32-bytes-secure!"
-	router := setupPenTestRouter(secret)
+	router, privKey := setupPenTestRouter()
 
-	// ATTACK 1: Forged Token with Wrong Secret
-	attackerSecret := "wrong-secret-key-attacker-guess!"
-	forgedToken := generatePenTestToken(attackerSecret, uuid.New(), uuid.New(), uuid.New(), "admin", time.Hour)
+	// ATTACK 1: Forged Token with Wrong / Untrusted RSA Key
+	attackerKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	forgedToken := generatePenTestToken(attackerKey, uuid.New(), uuid.New(), uuid.New(), "admin", time.Hour)
 
 	req1, _ := http.NewRequest(http.MethodGet, "/api/v1/workspaces/"+uuid.NewString()+"/agents", nil)
 	req1.Header.Set("Authorization", "Bearer "+forgedToken)
@@ -219,7 +220,7 @@ func TestPenTest_JWTTamperingAndExpiry(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w1.Code, "Forged JWT signature must return 401 Unauthorized")
 
 	// ATTACK 2: Expired Token Replay
-	expiredToken := generatePenTestToken(secret, uuid.New(), uuid.New(), uuid.New(), "admin", -time.Hour)
+	expiredToken := generatePenTestToken(privKey, uuid.New(), uuid.New(), uuid.New(), "admin", -time.Hour)
 
 	req2, _ := http.NewRequest(http.MethodGet, "/api/v1/workspaces/"+uuid.NewString()+"/agents", nil)
 	req2.Header.Set("Authorization", "Bearer "+expiredToken)
@@ -241,11 +242,10 @@ func TestPenTest_JWTTamperingAndExpiry(t *testing.T) {
 // Test 4: SQL Injection String Handling in Input Payloads
 // -----------------------------------------------------------------------------
 func TestPenTest_SQLInjectionPayloads(t *testing.T) {
-	secret := "test-secret-key-32-bytes-secure!"
-	router := setupPenTestRouter(secret)
+	router, privKey := setupPenTestRouter()
 
 	wsID := uuid.New()
-	token := generatePenTestToken(secret, uuid.New(), uuid.New(), wsID, "owner", time.Hour)
+	token := generatePenTestToken(privKey, uuid.New(), uuid.New(), wsID, "owner", time.Hour)
 
 	// Payload with aggressive SQL injection fragments
 	sqliPayloads := []string{

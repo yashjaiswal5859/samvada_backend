@@ -212,6 +212,7 @@ func (w *IngestionWorker) handleCallTurn(ctx context.Context, data []byte) {
 }
 
 func (w *IngestionWorker) periodicFlusher(ctx context.Context) {
+	defer w.flushTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():

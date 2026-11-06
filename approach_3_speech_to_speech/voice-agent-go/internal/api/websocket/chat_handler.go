@@ -197,8 +197,23 @@ func (h *ChatHandler) HandleWSChat(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Active Deepgram STT session (nil when mic is off)
-	var sttSession stt.STTSession
-	var sttCancel context.CancelFunc
+	type activeSTT struct {
+		session stt.STTSession
+		cancel  context.CancelFunc
+	}
+	var currentSTT *activeSTT
+	stopCurrentSTT := func() {
+		if currentSTT != nil {
+			if currentSTT.cancel != nil {
+				currentSTT.cancel()
+			}
+			if currentSTT.session != nil {
+				currentSTT.session.Close()
+			}
+			currentSTT = nil
+		}
+	}
+	defer stopCurrentSTT()
 
 	// processQuery handles the full RAG + LLM + TTS pipeline for a user query
 	processQuery := func(query string, audioBytes []byte) {
@@ -313,21 +328,23 @@ func (h *ChatHandler) HandleWSChat(w http.ResponseWriter, r *http.Request) {
 			if !h.sttProvider.RequiresServerProcessing() {
 				continue // Chrome STT handles everything in browser
 			}
-			if sttSession != nil {
-				sttSession.Close()
-			}
+			stopCurrentSTT()
+
 			newSession, sttErr := h.sttProvider.NewSession(sessionID)
 			if sttErr != nil {
 				log.Printf("[Chat WS STT ERROR] Failed to start STT session: %v", sttErr)
 				safeWrite(map[string]interface{}{"type": "stt_error", "text": sttErr.Error()})
 				continue
 			}
-			sttSession = newSession
 			safeWrite(map[string]interface{}{"type": "stt_ready"})
 
 			// Background goroutine: read Deepgram transcripts and relay to browser
-			var ctx context.Context
-			ctx, sttCancel = context.WithCancel(context.Background())
+			sttCtx, cancel := context.WithCancel(context.Background())
+			currentSTT = &activeSTT{
+				session: newSession,
+				cancel:  cancel,
+			}
+
 			go func(ctx context.Context, session stt.STTSession) {
 				for {
 					select {
@@ -344,11 +361,11 @@ func (h *ChatHandler) HandleWSChat(w http.ResponseWriter, r *http.Request) {
 						})
 					}
 				}
-			}(ctx, sttSession)
+			}(sttCtx, newSession)
 
 		case "audio":
 			// Raw audio chunk from browser mic → relay to Deepgram
-			if sttSession == nil {
+			if currentSTT == nil || currentSTT.session == nil {
 				log.Printf("[Chat WS STT WARN] Audio chunk received but sttSession is nil")
 				continue
 			}
@@ -361,7 +378,7 @@ func (h *ChatHandler) HandleWSChat(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[Chat WS STT ERROR] Base64 decode error: %v", decErr)
 				continue
 			}
-			if sendErr := sttSession.SendAudio(pcmBytes); sendErr != nil {
+			if sendErr := currentSTT.session.SendAudio(pcmBytes); sendErr != nil {
 				log.Printf("[Chat WS STT ERROR] Audio send error: %v", sendErr)
 			} else {
 				log.Printf("[Chat WS STT] Relayed %d audio bytes to Deepgram", len(pcmBytes))
@@ -398,17 +415,17 @@ func (h *ChatHandler) HandleWSChat(w http.ResponseWriter, r *http.Request) {
 
 		case "stop_stt":
 			// User released mic — gracefully close Deepgram session
-			if sttSession != nil {
-				session := sttSession
-				cancel := sttCancel
-				sttSession = nil
-				sttCancel = nil
-				go func() {
-					session.Close()
-					if cancel != nil {
-						cancel()
+			if currentSTT != nil {
+				toStop := currentSTT
+				currentSTT = nil
+				go func(s *activeSTT) {
+					if s.session != nil {
+						s.session.Close()
 					}
-				}()
+					if s.cancel != nil {
+						s.cancel()
+					}
+				}(toStop)
 			}
 
 		default:
@@ -422,12 +439,7 @@ func (h *ChatHandler) HandleWSChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cleanup STT session on disconnect
-	if sttSession != nil {
-		if sttCancel != nil {
-			sttCancel()
-		}
-		sttSession.Close()
-	}
+	stopCurrentSTT()
 }
 
 type openAIChoice struct {

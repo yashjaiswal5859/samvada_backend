@@ -142,6 +142,10 @@ func (r *analyticsRepo) GetDailyVolumeTrend(
 		trends = append(trends, &t)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating daily volume rows: %w", err)
+	}
+
 	return trends, nil
 }
 
@@ -215,6 +219,10 @@ func (r *analyticsRepo) GetAgentLeaderboard(
 		items = append(items, &item)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating agent leaderboard rows: %w", err)
+	}
+
 	return items, nil
 }
 
@@ -283,6 +291,10 @@ func (r *analyticsRepo) GetConversionFunnels(
 			return nil, fmt.Errorf("scanning conversion funnel row: %w", err)
 		}
 		stages = append(stages, &st)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating conversion funnel rows: %w", err)
 	}
 
 	return stages, nil

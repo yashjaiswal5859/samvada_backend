@@ -57,7 +57,16 @@ func (r *agentRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 }
 
 func (r *agentRepo) Update(ctx context.Context, agent *domain.Agent) error {
-	return r.db.WithContext(ctx).Save(agent).Error
+	res := r.db.WithContext(ctx).
+		Where("id = ? AND workspace_id = ?", agent.ID, agent.WorkspaceID).
+		Save(agent)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return domain.ErrAgentNotFound
+	}
+	return nil
 }
 
 func (r *agentRepo) Delete(ctx context.Context, workspaceID, id uuid.UUID) error {

@@ -74,15 +74,20 @@ func (r *usageRepo) GetUsageSummary(
 		GROUP BY workspace_id
 	`
 	rows, err := r.conn.Query(ctx, queryPerWS, orgID, start, end)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var wsID string
-			var minutes int64
-			if err := rows.Scan(&wsID, &minutes); err == nil {
-				s.PerWorkspaceMinutes[wsID] = minutes
-			}
+	if err != nil {
+		return nil, fmt.Errorf("querying per-workspace usage: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var wsID string
+		var minutes int64
+		if err := rows.Scan(&wsID, &minutes); err != nil {
+			return nil, fmt.Errorf("scanning per-workspace usage: %w", err)
 		}
+		s.PerWorkspaceMinutes[wsID] = minutes
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating per-workspace usage rows: %w", err)
 	}
 
 	return &s, nil

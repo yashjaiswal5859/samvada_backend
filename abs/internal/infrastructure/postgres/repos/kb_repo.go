@@ -99,7 +99,16 @@ func (r *kbRepo) ListKBByWorkspace(ctx context.Context, workspaceID uuid.UUID) (
 }
 
 func (r *kbRepo) UpdateKB(ctx context.Context, kb *domain.KnowledgeBase) error {
-	return r.db.WithContext(ctx).Save(kb).Error
+	res := r.db.WithContext(ctx).
+		Where("id = ? AND workspace_id = ?", kb.ID, kb.WorkspaceID).
+		Save(kb)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return domain.ErrKBNotFound
+	}
+	return nil
 }
 
 func (r *kbRepo) DeleteKB(ctx context.Context, workspaceID, id uuid.UUID) error {
@@ -218,6 +227,10 @@ func (r *kbRepo) SearchChunks(
 			return nil, err
 		}
 		results = append(results, &res)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return results, nil

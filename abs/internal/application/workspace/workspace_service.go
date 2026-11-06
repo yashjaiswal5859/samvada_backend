@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/samvada/abs/internal/domain"
+	"github.com/samvada/abs/internal/infrastructure/keto"
 )
 
 type CreateWorkspaceRequest struct {
@@ -34,6 +35,7 @@ type UpdateWorkspaceRequest struct {
 }
 
 type WorkspaceService interface {
+	SetKetoClient(ketoClient keto.Client)
 	CreateWorkspace(ctx context.Context, orgID uuid.UUID, req CreateWorkspaceRequest) (*domain.Workspace, error)
 	GetWorkspace(ctx context.Context, id uuid.UUID) (*domain.Workspace, error)
 	GetWorkspaceBySlug(ctx context.Context, orgID uuid.UUID, slug string) (*domain.Workspace, error)
@@ -49,8 +51,9 @@ type WorkspaceService interface {
 }
 
 type workspaceService struct {
-	wsRepo domain.WorkspaceRepository
-	log    *zap.Logger
+	wsRepo     domain.WorkspaceRepository
+	ketoClient keto.Client
+	log        *zap.Logger
 }
 
 func NewWorkspaceService(wsRepo domain.WorkspaceRepository, log *zap.Logger) WorkspaceService {
@@ -58,6 +61,10 @@ func NewWorkspaceService(wsRepo domain.WorkspaceRepository, log *zap.Logger) Wor
 		wsRepo: wsRepo,
 		log:    log.Named("workspace_service"),
 	}
+}
+
+func (s *workspaceService) SetKetoClient(ketoClient keto.Client) {
+	s.ketoClient = ketoClient
 }
 
 func (s *workspaceService) CreateWorkspace(
@@ -113,6 +120,12 @@ func (s *workspaceService) CreateWorkspace(
 			CreatedAt:     time.Now().UTC(),
 		}
 		_ = s.wsRepo.AddMember(ctx, member)
+
+		// Mirror relationship tuples in Ory Keto ReBAC
+		if s.ketoClient != nil {
+			_ = s.ketoClient.CreateRelationship(ctx, "workspaces", wsID.String(), "owner", req.CreatorUserID.String())
+			_ = s.ketoClient.CreateRelationship(ctx, "workspaces", wsID.String(), "admin", req.CreatorUserID.String())
+		}
 	}
 
 	return ws, nil
@@ -176,6 +189,11 @@ func (s *workspaceService) AddMember(ctx context.Context, workspaceID, userID uu
 	if err := s.wsRepo.AddMember(ctx, member); err != nil {
 		return nil, err
 	}
+
+	if s.ketoClient != nil {
+		_ = s.ketoClient.CreateRelationship(ctx, "workspaces", workspaceID.String(), role, userID.String())
+	}
+
 	return member, nil
 }
 

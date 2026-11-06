@@ -179,10 +179,15 @@ func (h *LiveConsoleHandler) TransferCall(c *gin.Context) {
 // ListenCall provides live audio stream metadata / stream subscription info
 func (h *LiveConsoleHandler) ListenCall(c *gin.Context) {
 	callID := c.Param("call_id")
+	wsHost := "localhost:8084"
+	if host := c.Request.Host; host != "" {
+		hostName := strings.Split(host, ":")[0]
+		wsHost = hostName + ":8084"
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
 		"call_id":    callID,
-		"stream_url": "ws://localhost:8000/ws/live-console?call_id=" + callID,
+		"stream_url": "ws://" + wsHost + "/ws/live-console?call_id=" + callID,
 		"mode":       "supervisor_listen",
 	})
 }

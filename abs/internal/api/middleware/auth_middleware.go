@@ -34,20 +34,42 @@ import (
 	apperrors "github.com/samvada/proto/pkg/errors"
 )
 
+// Gin context keys for authenticated user identity.
 const (
 	ContextUserIDKey    = "user_id"
 	ContextUserEmailKey = "user_email"
 	ContextClaimsKey    = "jwt_claims"
 )
 
-// AuthMiddleware validates JWT access tokens.
+// Cookie names for HttpOnly secure token storage.
+const (
+	CookieAccessToken  = "access_token"
+	CookieRefreshToken = "refresh_token"
+)
+
+// HTTP header keys and prefixes.
+const (
+	HeaderAuthorization = "Authorization"
+	BearerPrefix        = "bearer"
+)
+
+// Canonical error messages — single source of truth for all auth error responses.
+const (
+	MsgTokenExpiredRefresh = "Access token is missing. Use your refresh token to obtain a new one."
+	MsgTokenExpired        = "Access token has expired. Please refresh your session."
+	MsgNoActiveSession     = "Authentication required. No active session found."
+	MsgInvalidToken        = "Invalid token signature or malformed payload."
+	MsgTokenNotValid       = "Token is not valid."
+	MsgClaimsExtractFailed = "Failed to extract token claims."
+	MsgMissingUserID       = "Token does not contain a valid user identifier (sub)."
+)
+
+// AuthMiddleware validates JWT access tokens exclusively via Ory Hydra RS256 JWKS.
 type AuthMiddleware struct {
-	jwtSecret  []byte
 	jwksURL    string
 	jwksKeys   map[string]*rsa.PublicKey
 	jwksExpiry time.Time
 	jwksMu     sync.RWMutex
-	appEnv     string
 	log        *zap.Logger
 }
 
@@ -58,12 +80,19 @@ func NewAuthMiddleware(cfg *configs.Config, log *zap.Logger) *AuthMiddleware {
 		jwksURL = "http://hydra:4444/.well-known/jwks.json"
 	}
 	return &AuthMiddleware{
-		jwtSecret: []byte(cfg.Auth.JWTSecret),
-		jwksURL:   jwksURL,
-		jwksKeys:  make(map[string]*rsa.PublicKey),
-		appEnv:    cfg.App.Env,
-		log:       log.Named("auth_middleware"),
+		jwksURL:  jwksURL,
+		jwksKeys: make(map[string]*rsa.PublicKey),
+		log:      log.Named("auth_middleware"),
 	}
+}
+
+// SetTestPublicKey allows test harnesses to register an RSA public key directly,
+// maintaining strict RS256 token verification without HMAC fallback.
+func (m *AuthMiddleware) SetTestPublicKey(kid string, pubKey *rsa.PublicKey) {
+	m.jwksMu.Lock()
+	defer m.jwksMu.Unlock()
+	m.jwksKeys[kid] = pubKey
+	m.jwksExpiry = time.Now().Add(24 * time.Hour)
 }
 
 func (m *AuthMiddleware) getRSAPublicKey(t *jwt.Token) (*rsa.PublicKey, error) {
@@ -71,18 +100,32 @@ func (m *AuthMiddleware) getRSAPublicKey(t *jwt.Token) (*rsa.PublicKey, error) {
 
 	m.jwksMu.RLock()
 	if time.Now().Before(m.jwksExpiry) {
-		if key, ok := m.jwksKeys[kid]; ok {
-			m.jwksMu.RUnlock()
-			return key, nil
+		if kid != "" {
+			if key, ok := m.jwksKeys[kid]; ok {
+				m.jwksMu.RUnlock()
+				return key, nil
+			}
+		} else if len(m.jwksKeys) == 1 {
+			for _, key := range m.jwksKeys {
+				m.jwksMu.RUnlock()
+				return key, nil
+			}
 		}
 	}
 	m.jwksMu.RUnlock()
 
 	if err := m.refreshJWKS(); err != nil {
 		m.jwksMu.RLock()
-		if key, ok := m.jwksKeys[kid]; ok {
-			m.jwksMu.RUnlock()
-			return key, nil
+		if kid != "" {
+			if key, ok := m.jwksKeys[kid]; ok {
+				m.jwksMu.RUnlock()
+				return key, nil
+			}
+		} else if len(m.jwksKeys) == 1 {
+			for _, key := range m.jwksKeys {
+				m.jwksMu.RUnlock()
+				return key, nil
+			}
 		}
 		m.jwksMu.RUnlock()
 		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
@@ -90,8 +133,14 @@ func (m *AuthMiddleware) getRSAPublicKey(t *jwt.Token) (*rsa.PublicKey, error) {
 
 	m.jwksMu.RLock()
 	defer m.jwksMu.RUnlock()
-	if key, ok := m.jwksKeys[kid]; ok {
-		return key, nil
+	if kid != "" {
+		if key, ok := m.jwksKeys[kid]; ok {
+			return key, nil
+		}
+	} else if len(m.jwksKeys) == 1 {
+		for _, key := range m.jwksKeys {
+			return key, nil
+		}
 	}
 	return nil, fmt.Errorf("key kid %q not found in JWKS", kid)
 }
@@ -160,58 +209,59 @@ func (m *AuthMiddleware) refreshJWKS() error {
 // RequireAuth is a Gin middleware that enforces authentication on protected routes.
 func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Development bypass header (strictly forbidden and blocked in production)
-		if devUserID := c.GetHeader("X-Dev-User-ID"); devUserID != "" {
-			if m.appEnv == "development" || m.appEnv == "local" || m.appEnv == "test" {
-				m.log.Debug("Dev user bypass active", zap.String("dev_user_id", devUserID))
-				c.Set(ContextUserIDKey, devUserID)
-				c.Set(ContextUserEmailKey, c.GetHeader("X-Dev-User-Email"))
-				c.Next()
-				return
-			}
-			m.log.Warn("SECURITY ALERT: X-Dev-User-ID header blocked in non-development environment",
-				zap.String("app_env", m.appEnv),
-				zap.String("client_ip", c.ClientIP()),
-				zap.String("path", c.Request.URL.Path),
-			)
-		}
-
-		// 2. Extract Bearer token from HttpOnly cookie or Authorization header
+		// 1. Extract Bearer token from HttpOnly cookie or Authorization header
 		tokenString := ""
-		if cookieToken, err := c.Cookie("access_token"); err == nil && cookieToken != "" {
+		if cookieToken, err := c.Cookie(CookieAccessToken); err == nil && cookieToken != "" {
 			tokenString = cookieToken
 		}
 
 		if tokenString == "" {
-			authHeader := c.GetHeader("Authorization")
+			authHeader := c.GetHeader(HeaderAuthorization)
 			if authHeader != "" {
 				parts := strings.SplitN(authHeader, " ", 2)
-				if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+				if len(parts) == 2 && strings.EqualFold(parts[0], BearerPrefix) {
 					tokenString = strings.TrimSpace(parts[1])
 				}
 			}
 		}
 
 		if tokenString == "" {
+			// Check if refresh_token cookie exists — if so, the frontend can
+			// transparently rotate tokens via /api/v1/auth/refresh without
+			// forcing the user to log in again.
+			if refreshCookie, err := c.Cookie(CookieRefreshToken); err == nil && refreshCookie != "" {
+				m.log.Info("Access token missing but refresh token present — signalling TOKEN_EXPIRED for transparent refresh",
+					zap.String("path", c.Request.URL.Path),
+					zap.String("client_ip", c.ClientIP()),
+				)
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"success": false,
+					"error": gin.H{
+						"code":    apperrors.CodeTokenExpired,
+						"message": MsgTokenExpiredRefresh,
+					},
+				})
+				return
+			}
+
+			// Neither access_token nor refresh_token present — force login
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"error": gin.H{
-					"code":    apperrors.CodeUnauthorized,
-					"message": "Authentication required. Missing Bearer token in Authorization header or cookie.",
+					"code":          apperrors.CodeTokenMissing,
+					"message":       MsgNoActiveSession,
+					"require_login": true,
 				},
 			})
 			return
 		}
 
-		// 3. Parse and validate JWT
+		// 2. Parse and validate JWT strictly via RS256 (Ory Hydra JWKS)
 		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
 			if _, ok := t.Method.(*jwt.SigningMethodRSA); ok {
 				return m.getRSAPublicKey(t)
 			}
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); ok {
-				return m.jwtSecret, nil
-			}
-			return nil, errors.New("unexpected signing method")
+			return nil, errors.New("unexpected signing method: only RS256 supported from Ory Hydra")
 		})
 
 		if err != nil {
@@ -223,8 +273,8 @@ func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"success": false,
 					"error": gin.H{
-						"code":    "TOKEN_EXPIRED",
-						"message": "Access token has expired. Please refresh your session.",
+						"code":    apperrors.CodeTokenExpired,
+						"message": MsgTokenExpired,
 					},
 				})
 				return
@@ -234,8 +284,9 @@ func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"error": gin.H{
-					"code":    "INVALID_TOKEN",
-					"message": "Invalid token signature or malformed payload.",
+					"code":          apperrors.CodeInvalidToken,
+					"message":       MsgInvalidToken,
+					"require_login": true,
 				},
 			})
 			return
@@ -245,8 +296,8 @@ func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"error": gin.H{
-					"code":    apperrors.CodeUnauthorized,
-					"message": "Token is not valid.",
+					"code":    apperrors.CodeInvalidToken,
+					"message": MsgTokenNotValid,
 				},
 			})
 			return
@@ -259,7 +310,7 @@ func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 				"success": false,
 				"error": gin.H{
 					"code":    apperrors.CodeUnauthorized,
-					"message": "Failed to extract token claims.",
+					"message": MsgClaimsExtractFailed,
 				},
 			})
 			return
@@ -278,7 +329,7 @@ func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 				"success": false,
 				"error": gin.H{
 					"code":    apperrors.CodeUnauthorized,
-					"message": "Token does not contain a valid user identifier (sub).",
+					"message": MsgMissingUserID,
 				},
 			})
 			return

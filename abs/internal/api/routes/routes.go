@@ -15,6 +15,7 @@ import (
 type RouterDependencies struct {
 	AuthMW              *middleware.AuthMiddleware
 	WorkspaceMW         *middleware.WorkspaceMiddleware
+	ReBACMW             *middleware.ReBACMiddleware
 	OrgHandler          *handlers.OrgHandler
 	WorkspaceHandler    *handlers.WorkspaceHandler
 	AgentHandler        *handlers.AgentHandler
@@ -34,6 +35,10 @@ type RouterDependencies struct {
 }
 
 func RegisterAPIRoutes(r *gin.Engine, deps RouterDependencies) {
+	if deps.ReBACMW != nil {
+		middleware.SetDefaultReBACMiddleware(deps.ReBACMW)
+	}
+
 	// Global Observability & Rate Limiting (Phase 6)
 	r.Use(middleware.PrometheusMetrics())
 	r.GET("/metrics", middleware.MetricsHandler())

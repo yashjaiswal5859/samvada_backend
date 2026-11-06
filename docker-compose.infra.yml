@@ -28,7 +28,7 @@ services:
   # The init script (init-databases.sh) auto-creates both on first boot.
   # ---------------------------------------------------------------------------
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: samvada-postgres
     restart: unless-stopped
     ports:
@@ -253,6 +253,130 @@ services:
     networks:
       - samvada-net
 
+  # ---------------------------------------------------------------------------
+  # 7. Ory Kratos — Identity Management Engine & DB Migrations
+  # ---------------------------------------------------------------------------
+  kratos-migrate:
+    image: oryd/kratos:v0.13.0
+    container_name: samvada-kratos-migrate
+    networks:
+      - samvada-net
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - ./auth/configs/kratos:/etc/config/kratos
+    command: migrate sql -e --yes --config /etc/config/kratos/kratos.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kratos:
+    image: oryd/kratos:v0.13.0
+    container_name: samvada-kratos
+    restart: unless-stopped
+    networks:
+      - samvada-net
+    ports:
+      - "4433:4433"
+      - "4434:4434"
+    volumes:
+      - ./auth/configs/kratos:/etc/config/kratos
+      - kratos_data:/var/lib/kratos
+    command: serve --config /etc/config/kratos/kratos.yml --dev --watch-courier
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/kratos?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kratos-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4433/health/ready || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # 8. Ory Hydra — OAuth 2.0 / OIDC Authorization Engine & Migrations
+  # ---------------------------------------------------------------------------
+  hydra-migrate:
+    image: oryd/hydra:v1.11.8
+    container_name: samvada-hydra-migrate
+    networks:
+      - samvada-net
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/hydra?sslmode=disable
+    volumes:
+      - ./auth/configs/hydra:/etc/config/hydra
+    command: migrate sql -e --yes --config /etc/config/hydra/hydra.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  hydra:
+    image: oryd/hydra:v1.11.8
+    container_name: samvada-hydra
+    restart: unless-stopped
+    networks:
+      - samvada-net
+    ports:
+      - "4444:4444"
+      - "4445:4445"
+    volumes:
+      - ./auth/configs/hydra:/etc/config/hydra
+      - hydra_data:/var/lib/hydra
+    command: serve all --dangerous-force-http --config /etc/config/hydra/hydra.yml
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/hydra?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hydra-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4445/health/ready || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # 9. Ory Keto — Relationship-Based Access Control (ReBAC) & Migrations
+  # ---------------------------------------------------------------------------
+  keto-migrate:
+    image: oryd/keto:v0.8.0-alpha.2
+    container_name: samvada-keto-migrate
+    networks:
+      - samvada-net
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/keto?sslmode=disable
+    volumes:
+      - ./auth/configs/keto:/etc/config/keto
+    command: migrate up --config /etc/config/keto/keto.yml --yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  keto:
+    image: oryd/keto:v0.8.0-alpha.2
+    container_name: samvada-keto
+    restart: unless-stopped
+    networks:
+      - samvada-net
+    ports:
+      - "4466:4466"
+      - "4467:4467"
+    volumes:
+      - ./auth/configs/keto:/etc/config/keto
+      - keto_data:/var/lib/keto
+    command: serve --config /etc/config/keto/keto.yml
+    environment:
+      - DSN=postgres://samvada:samvada_dev_2026@postgres:5432/keto?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keto-migrate:
+        condition: service_completed_successfully
+
 # =============================================================================
 # Persistent Volumes
 # =============================================================================
@@ -272,6 +396,12 @@ volumes:
   kafka_data:
     driver: local
     name: samvada-kafka-data
+  kratos_data:
+    driver: local
+  hydra_data:
+    driver: local
+  keto_data:
+    driver: local
 
 # =============================================================================
 # Network

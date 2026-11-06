@@ -131,10 +131,10 @@ func LoadConfig() {
 	viper.SetDefault("FISH_AUDIO_LOCAL_URL", "http://localhost:8080/v1/tts")
 	viper.SetDefault("MURF_VOICE", "en-US-natalie")
 	viper.SetDefault("MURF_MODEL", "falcon-2")
-	viper.SetDefault("DOCS_BASE_PATH", "D:/Voice AI/docs") // Default shared docs path
-	viper.SetDefault("TENANT_DOCS_PATH", "D:/Voice AI/docs/Swiggy_HDFC") // Plug & play active tenant path
-	viper.SetDefault("ACTIVE_PRODUCT_PATH", "D:/Voice AI/docs/Swiggy_HDFC")
-	viper.SetDefault("DEFAULT_COMPANY_NAME", "Swiggy_HDFC")
+	viper.SetDefault("DOCS_BASE_PATH", "./docs") // Default shared docs path
+	viper.SetDefault("TENANT_DOCS_PATH", "./docs/demo_tenant") // Plug & play active tenant path
+	viper.SetDefault("ACTIVE_PRODUCT_PATH", "./docs/demo_tenant")
+	viper.SetDefault("DEFAULT_COMPANY_NAME", "Samvada_AI")
 	viper.SetDefault("DEFAULT_CUSTOMER_NAME", "Valued Customer")
 	viper.SetDefault("INITIAL_LANGUAGE", "english")
 	viper.SetDefault("TTS_SPEED", 1.0)
@@ -142,7 +142,7 @@ func LoadConfig() {
 	viper.SetDefault("FILLER_AUDIO_ENABLED", true)
 	viper.SetDefault("FILLER_AUDIO_SPEED", 1.0)
 	viper.SetDefault("AMBIENCE_AUDIO_ENABLED", true)
-	viper.SetDefault("AMBIENCE_AUDIO_PATH", "D:/Voice AI/approach_2_speech_to_speech/ranjit_foley-indian-office-ambience-4-135825 (mp3cut.net).mp3")
+	viper.SetDefault("AMBIENCE_AUDIO_PATH", "./audio/ambience.mp3")
 	viper.SetDefault("AMBIENCE_VOLUME_IDLE", 0.25)
 	viper.SetDefault("AMBIENCE_VOLUME_SPEAKING", 0.10)
 	viper.SetDefault("ABS_GRPC_URL", "localhost:9082")

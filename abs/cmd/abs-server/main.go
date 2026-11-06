@@ -176,9 +176,13 @@ func main() {
 	}
 
 	// 6.3 Optional Reporting Client for ClickHouse Analytics & Usage Metering
-	reportingClient, err := client.NewReportingClient("localhost:9083", log)
+	reportingAddr := cfg.Reporting.GRPCAddress
+	if reportingAddr == "" {
+		reportingAddr = "localhost:9083"
+	}
+	reportingClient, err := client.NewReportingClient(reportingAddr, log)
 	if err != nil {
-		log.Warn("Reporting Client not available at localhost:9083 (metering running in fallback mode)", zap.Error(err))
+		log.Warn("Reporting Client not available (metering running in fallback mode)", zap.String("address", reportingAddr), zap.Error(err))
 	} else {
 		defer reportingClient.Close()
 	}
@@ -206,6 +210,8 @@ func main() {
 
 	// 6.2 Initialize Keto ReBAC & Admin Services
 	ketoClient := keto.NewKetoClient(cfg.Keto.ReadURL, cfg.Keto.WriteURL, log)
+	wsService.SetKetoClient(ketoClient)
+	rebacMW := middleware.NewReBACMiddleware(ketoClient, db, rdb, cfg.App.Env, log)
 	adminService := admin.NewAdminService(cfg, ketoClient, rdb, log)
 	adminHandler := handlers.NewAdminHandler(adminService)
 	adminAuthMW := middleware.NewAdminAuthMiddleware(adminService, ketoClient, cfg.Auth.JWTSecret, authMiddleware, log)
@@ -230,6 +236,7 @@ func main() {
 	routes.RegisterAPIRoutes(router, routes.RouterDependencies{
 		AuthMW:              authMiddleware,
 		WorkspaceMW:         workspaceMiddleware,
+		ReBACMW:             rebacMW,
 		OrgHandler:          orgHandler,
 		WorkspaceHandler:    wsHandler,
 		AgentHandler:        agentHandler,

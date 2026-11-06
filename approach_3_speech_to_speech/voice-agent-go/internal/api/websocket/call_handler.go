@@ -149,9 +149,6 @@ func (h *CallHandler) HandleCallStream(w http.ResponseWriter, r *http.Request) {
 			sessionID, sessDuration, customerName, companyName)
 	}()
 
-	// Main processing channels
-	audioChan := make(chan []byte, 100)
-	transcriptChan := make(chan string, 10)
 
 	// Inactivity Nudge Goroutine: If caller stays quiet for >=5s after agent finishes speaking (based on real Deepgram text, ignoring background noise)
 	wg.Add(1)
@@ -239,53 +236,7 @@ func (h *CallHandler) HandleCallStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Goroutine 2: Text Emotion classification and Local RAG context indexing via C++
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case text, ok := <-transcriptChan:
-				if !ok {
-					return
-				}
-				// 1. Classify sentiment
-				if h.emotionService != nil {
-					scores, err := h.emotionService.ClassifyText(text, sessionID)
-					if err != nil {
-						log.Printf("[WebSocket CIE] Text classification error: %v", err)
-					} else {
-						log.Printf("[WebSocket CIE] Text sentiment -> Anger: %.2f, Joy: %.2f, Neutral: %.2f",
-							scores.Anger, scores.Joy, scores.Neutral)
-					}
-				}
 
-				// 2. Perform RAG search on C++
-				results, err := h.ragProvider.Search(sessionID, text, tenantIDStr)
-				if err != nil {
-					log.Printf("[WebSocket RAG] C++ RAG Search error: %v", err)
-				} else {
-					log.Printf("[WebSocket RAG] Search query: \"%s\" -> %d document snippets retrieved.", text, len(results))
-					for _, res := range results {
-						log.Printf("  -> [Match (Score: %.2f)] %s", res.Score, res.Text)
-					}
-				}
-
-				// 3. Accumulate memory if user states preference
-				if len(text) > 10 { // Mock trigger logic for memory ingestion
-					memoryText := "Customer mentioned: " + text
-					mu.Lock()
-					dynamicMemories = append(dynamicMemories, memoryText)
-					mu.Unlock()
-
-					// Dynamically index on C++ server RAM
-					_ = h.ragProvider.IndexDynamic(sessionID, memoryText, "live_transcript", tenantIDStr)
-				}
-			case <-stopChan:
-				return
-			}
-		}
-	}()
 
 	var activeStreamSid string
 	var sttSession stt.STTSession
@@ -300,12 +251,17 @@ func (h *CallHandler) HandleCallStream(w http.ResponseWriter, r *http.Request) {
 
 	// Cleanup on loop exit
 	defer func() {
+		activeTurnMu.Lock()
+		if activeTurnCancel != nil {
+			activeTurnCancel()
+			activeTurnCancel = nil
+		}
+		activeTurnMu.Unlock()
+
 		if pacer != nil {
 			pacer.Stop()
 		}
 		close(stopChan)
-		close(audioChan)
-		close(transcriptChan)
 		wg.Wait()
 		if recorder != nil {
 			recorder.Close()
@@ -867,6 +823,7 @@ func (h *CallHandler) HandleCallStream(w http.ResponseWriter, r *http.Request) {
 				}
 				lastUserQueryText = cleanText
 				lastUserQueryTime = now
+				dynamicMemories = append(dynamicMemories, fmt.Sprintf("Customer mentioned: %s", cleanText))
 				mu.Unlock()
 
 				// Dynamically Index Customer Speech into Session Knowledge Base (C++ / Cloud Vector RAG)

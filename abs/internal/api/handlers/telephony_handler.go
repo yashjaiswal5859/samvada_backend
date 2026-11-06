@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -72,6 +73,39 @@ func (h *TelephonyHandler) SearchAvailableNumbers(c *gin.Context) {
 	var wsIDPtr *uuid.UUID
 	if wsID, err := uuid.Parse(wsIDStr); err == nil {
 		wsIDPtr = &wsID
+	}
+
+	provider := c.Query("provider")
+	country := c.Query("country")
+	areaCode := c.Query("area_code")
+
+	// If provider or carrier search parameters are specified, query live carrier adapter
+	if provider != "" || country != "" || areaCode != "" {
+		if provider == "" {
+			provider = "twilio"
+		}
+		if country == "" {
+			country = "US"
+		}
+		limit := 10
+		if lStr := c.Query("limit"); lStr != "" {
+			if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
+				limit = l
+			}
+		}
+		numType := c.DefaultQuery("type", "local")
+
+		carrierNumbers, err := h.telephonyService.SearchAvailableNumbers(c.Request.Context(), provider, country, areaCode, numType, limit)
+		if err != nil {
+			RespondError(c, http.StatusInternalServerError, "CARRIER_SEARCH_FAILED", err.Error())
+			return
+		}
+
+		RespondSuccess(c, http.StatusOK, gin.H{
+			"provider": provider,
+			"numbers":  carrierNumbers,
+		})
+		return
 	}
 
 	search := c.Query("search")

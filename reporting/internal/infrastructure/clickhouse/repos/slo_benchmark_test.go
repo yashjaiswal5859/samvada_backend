@@ -32,6 +32,9 @@ func TestClickHouse_QueryLatencySLO(t *testing.T) {
 	from := time.Now().Add(-24 * time.Hour)
 	to := time.Now()
 
+	// Warm-up query to establish TCP connection pool and warm table metadata cache
+	_, _ = analyticsRepo.GetKPISummary(ctx, orgID, &wsID, from, to)
+
 	// 1. Benchmark: KPI Summary Dashboard Aggregation
 	t.Run("SLO_KPISummaryAggregation", func(t *testing.T) {
 		start := time.Now()

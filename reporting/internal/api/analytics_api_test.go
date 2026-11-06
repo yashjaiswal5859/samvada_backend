@@ -6,6 +6,8 @@ package api_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -33,7 +35,15 @@ import (
 	"github.com/samvada/reporting/internal/infrastructure/redis"
 )
 
-const testJWTSecret = "samvada_jwt_super_secret_dev_2026_key"
+var (
+	testRSAPrivateKey *rsa.PrivateKey
+	testRSAPublicKey  *rsa.PublicKey
+)
+
+func init() {
+	testRSAPrivateKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+	testRSAPublicKey = &testRSAPrivateKey.PublicKey
+}
 
 func generateTestJWT(userID uuid.UUID, email, role, orgID string, exp time.Duration) (string, error) {
 	claims := jwt.MapClaims{
@@ -44,17 +54,15 @@ func generateTestJWT(userID uuid.UUID, email, role, orgID string, exp time.Durat
 		"iat":    time.Now().Unix(),
 		"exp":    time.Now().Add(exp).Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(testJWTSecret))
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "test-reporting-key"
+	return token.SignedString(testRSAPrivateKey)
 }
 
 func setupAPIRouter(t *testing.T) (*gin.Engine, domain.CallRepository) {
 	cfg := &configs.Config{
 		App: configs.AppConfig{
 			Env: "test",
-		},
-		Auth: configs.AuthConfig{
-			JWTSecret: testJWTSecret,
 		},
 		ClickHouse: configs.ClickHouseConfig{
 			Addr:           "localhost:9000",
@@ -91,6 +99,7 @@ func setupAPIRouter(t *testing.T) (*gin.Engine, domain.CallRepository) {
 	router.Use(gin.Recovery())
 
 	authMW := middleware.NewAuthMiddleware(cfg, logger)
+	authMW.SetTestPublicKey("test-reporting-key", testRSAPublicKey)
 	analyticsHandler := handlers.NewAnalyticsHandler(analyticsService)
 	callsHandler := handlers.NewCallsHandler(callsService)
 

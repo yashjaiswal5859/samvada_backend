@@ -1,76 +1,82 @@
-# Samvada ABS — Application & Billing Service
+# Samvada Application & Billing Service (ABS)
 
-> **Microservice:** Application & Billing Service (ABS)  
-> **Language:** Go 1.26+  
-> **HTTP Port:** `:8082`  
-> **gRPC Port:** `:9082`  
-> **Primary Stores:** PostgreSQL 16 (`samvada_abs`), Redis 7 (DB 1), Apache Kafka (`localhost:9092`)
+[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![pgvector](https://img.shields.io/badge/PostgreSQL-pgvector-336791?style=flat&logo=postgresql)](https://github.com/pgvector/pgvector)
+[![Port](https://img.shields.io/badge/Port-8082-orange)](#)
 
----
-
-## 1. Responsibilities
-
-The **Application & Billing Service (ABS)** is the central management and commerce engine of Samvada:
-- **Tenant Management:** Multi-tenant Organizations, isolated Workspaces, and RBAC memberships.
-- **Voice Agent Studio:** Agent configuration, system prompts, LLM/TTS voice parameters, and immutable versions.
-- **Knowledge Base (RAG):** Document chunking metadata, vector embeddings associations, and retrieval configs.
-- **Campaigns & Contacts:** Outbound campaign scheduling, audience segmentation, and contact management.
-- **Telephony & DIDs:** Inbound SIP DID mapping to agents and carrier trunk bindings.
-- **Commercial & Billing Engine:** Promotional signup credits ($5.00 PostgreSQL wallet), usage tier enforcement, Stripe & Razorpay dual-gateway checkout, and invoice generation.
-- **Inter-Service Communication:** Serves `AgentRuntimeService` via gRPC to S2S, queries `UsageReportingService` via gRPC from RE, and publishes domain lifecycle events to Kafka.
+> **Core Multi-Tenant Application, Telephony Ledger & Campaign Orchestrator**  
+> Manages organizations, workspaces, voice agent configurations, RAG vector embeddings, campaign dialer schedules, and wallet credit deductions.
 
 ---
 
-## 2. Clean Architecture Directory Structure
+## 🏛️ Clean Architecture & Decoupled Workers
 
-```
-backend/abs/
-├── cmd/
-│   └── abs-server/
-│       └── main.go              # Service bootstrap, HTTP (:8082) & gRPC (:9082) listeners
-├── configs/
-│   ├── config.go                # Configuration parser with env overrides
-│   └── config.yaml              # Local development configuration
-├── internal/
-│   ├── api/
-│   │   ├── dto/                 # Request/Response DTO structs with validation tags
-│   │   ├── handlers/            # HTTP controller handlers
-│   │   ├── middleware/          # Auth JWT, workspace resolution, CORS, correlation
-│   │   └── routes/              # Route group registrations
-│   ├── application/             # Use-case business logic services
-│   ├── domain/                  # Pure entities, domain errors, and repository interfaces
-│   ├── infrastructure/
-│   │   ├── postgres/            # Database connection pool & GORM repository implementations
-│   │   ├── redis/               # Session cache, ticket nonce store, and distributed locks
-│   │   ├── kafka/               # Sarama producer & event consumers
-│   │   └── storage/             # S3 / Local filesystem adapter
-│   ├── grpc/                    # gRPC server implementation for AgentRuntimeService
-│   └── workers/                 # Background workers (campaign runner, webhook dispatcher)
-├── migrations/                  # Versioned SQL migration files (.up.sql / .down.sql)
-├── pkg/
-│   └── logger/                  # Enterprise Zap structured logger with correlation IDs
-├── go.mod                       # Module definition (github.com/samvada/abs)
-└── README.md                    # Service documentation
-```
+ABS strictly adheres to Clean Hexagonal Architecture and splits execution into two binaries:
+1. **`abs-server` (:8082 HTTP / :9082 gRPC):** Stateless Gin REST API and gRPC server for tenant CRUD, agent builder, and runtime auth tickets. It acts as a pure event producer to Kafka.
+2. **`abs-worker` (Background Worker):** Asynchronous event consumer handling:
+   - Wallet credit deductions upon call completion (`s2s.call.completed`)
+   - Campaign contact dialing dispatch (`abs.campaign.dispatch`)
+   - Customer webhook deliveries with retry backoff (`abs.webhook.event`)
+   - Onboarding tenant provisioning (`auth.onboarding.completed`)
 
 ---
 
-## 3. Running Locally
+## 📨 Kafka Event Catalog
 
-### Prerequisites
-Ensure the shared infrastructure is running:
-```powershell
-cd d:\Voice AI\backend
-docker compose -f docker-compose.infra.yml up -d
+| Event Topic | Direction | Producer | Consumer | Payload / Purpose |
+|---|:---:|---|---|---|
+| `s2s.call.completed` | Consumed | S2S Voice Engine | `abs-worker` | Call duration & billable seconds; deducts balance from organization wallet |
+| `abs.campaign.dispatch` | Produced/Consumed | `abs-server` | `abs-worker` | Triggers parallel outbound dialer jobs for audience contacts |
+| `abs.webhook.event` | Produced/Consumed | `abs-server` | `abs-worker` | Dispatches HMAC-SHA256 signed event payloads to customer webhooks |
+| `auth.onboarding.completed` | Consumed | Auth Service | `abs-worker` | Auto-provisions default workspace, initial demo credits, and trial agent |
+| `kb.doc.ingest` | Produced | `abs-server` | `docling-worker` | Ingestion notification for uploaded PDF/DOCX files |
+
+---
+
+## 🗄️ Database Schemas & Migrations (14 Versions)
+
+Located in [`migrations/`](migrations/):
+1. `000001_create_organizations_and_workspaces`: Multi-tenant hierarchy
+2. `000002_create_agents`: Voice agent parameters, prompts, and telephony bindings
+3. `000003_create_knowledge_bases`: RAG document collections & `pgvector` chunks
+4. `000004_create_campaigns`: Outbound campaign dialer definitions and audiences
+5. `000005_create_telephony_numbers`: Phone number inventory and routing
+6. `000006_create_billing_and_wallets`: Credit balances, ledger transactions, and invoices
+7. `000007_create_webhooks`: Webhook endpoints and event subscriptions
+8. `000008_create_audit_logs`: SOC2-compliant administrative action trails
+9. `000009_create_performance_indexes`: Composite B-tree indexes for low-latency queries
+10. `000010_create_catalog_models`: Dynamic STT, LLM, and TTS provider inventory
+11. `000011_add_catalog_category`: Model categorization flags
+12. `000012_create_onboarding_table`: Operator onboarding step tracker
+13. `000013_add_phone_catalog_type`: Toll-free vs local number classification
+14. `000014_create_agent_versions`: Immutable versioning snapshots for rollback safety
+
+---
+
+## 📡 API Documentation
+- **Interactive Swagger UI:** Open `docs/swagger-ui.html`.
+- **OpenAPI 3.0 Specification:** See `docs/openapi.yaml` (1,352 lines).
+
+### Key Endpoints (`:8082`)
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/v1/workspaces` | `GET`, `POST` | Workspace listing and tenant creation |
+| `/api/v1/agents` | `GET`, `POST` | List and create voice agents |
+| `/api/v1/agents/:id/test-token` | `POST` | Issues signed ephemeral ticket for WebSocket testing |
+| `/api/v1/agents/:id/publish` | `POST` | Creates immutable snapshot version of agent |
+| `/api/v1/campaigns` | `GET`, `POST` | Outbound campaign creation and schedule start |
+| `/api/v1/kb/:id/documents` | `POST` | Presigned URL generation for document upload |
+| `/api/v1/billing/wallet` | `GET`, `POST` | Wallet balance inquiry and manual top-up |
+| `/healthz` | `GET` | Liveness and readiness probe |
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run unit tests
+go test -v ./...
+
+# Run tests with race detection
+go test -v -race ./...
 ```
-
-### Run ABS Server
-```powershell
-cd d:\Voice AI\backend\abs
-go run ./cmd/abs-server
-```
-
-### Health Endpoints
-- `GET http://localhost:8082/health` — Service liveness probe
-- `GET http://localhost:8082/ready` — Service readiness probe
-- `GET http://localhost:8082/api/v1/ping` — API connectivity test

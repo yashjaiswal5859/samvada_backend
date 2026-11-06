@@ -119,16 +119,25 @@ func (w *BillingWorker) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 
 		if ev.TotalCostUSD > 0 && ev.OrgID != uuid.Nil {
 			desc := fmt.Sprintf("Call %s deduction (%ds, %s)", ev.CallID.String()[:8], ev.DurationSec, ev.Disposition)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, _, err := w.walletService.DeductCallCost(ctx, ev.OrgID, ev.TotalCostUSD, desc, &ev.CallID)
-			cancel()
+			var deductErr error
+			for attempt := 1; attempt <= 3; attempt++ {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_, _, deductErr = w.walletService.DeductCallCost(ctx, ev.OrgID, ev.TotalCostUSD, desc, &ev.CallID)
+				cancel()
+				if deductErr == nil {
+					break
+				}
+				if attempt < 3 {
+					time.Sleep(time.Duration(attempt*100) * time.Millisecond)
+				}
+			}
 
-			if err != nil {
-				w.log.Error("Failed to deduct call cost from organization wallet",
+			if deductErr != nil {
+				w.log.Error("Failed to deduct call cost from organization wallet after retries",
 					zap.String("org_id", ev.OrgID.String()),
 					zap.String("call_id", ev.CallID.String()),
 					zap.Float64("cost_usd", ev.TotalCostUSD),
-					zap.Error(err),
+					zap.Error(deductErr),
 				)
 			} else {
 				w.log.Info("Processed call completion wallet deduction",

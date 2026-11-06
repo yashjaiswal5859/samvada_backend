@@ -54,47 +54,41 @@ type CreateWorkspaceRequest struct {
 }
 
 type CreateAgentRequest struct {
-	Name                  string                 `json:"name"`
-	Role                  string                 `json:"role"`
-	Description           *string                `json:"description,omitempty"`
-	SystemPrompt          string                 `json:"system_prompt"`
-	SystemPromptAlt       string                 `json:"systemPrompt,omitempty"`
-	VoiceID               string                 `json:"voice_id"`
-	VoiceIDAlt            string                 `json:"voiceId,omitempty"`
-	VoiceProvider         string                 `json:"voice_provider"`
-	VoiceProviderAlt      string                 `json:"voiceProvider,omitempty"`
-	VoiceName             string                 `json:"voice_name"`
-	VoiceNameAlt          string                 `json:"voiceName,omitempty"`
-	Language              string                 `json:"language"`
-	Model                 string                 `json:"model"`
-	Status                string                 `json:"status,omitempty"`
-	AssignedPhone         *string                `json:"assigned_phone,omitempty"`
-	PhoneNumberID         *string                `json:"phoneNumberId,omitempty"`
-	PhoneNumberIDAlt      *string                `json:"phone_number_id,omitempty"`
-	KnowledgeBaseIDs      []string               `json:"knowledgeBaseIds,omitempty"`
-	KnowledgeBaseIDsAlt   []string               `json:"knowledge_base_ids,omitempty"`
-	ToolAllowlist         []string               `json:"toolAllowlist,omitempty"`
-	EscalationPhoneNumber *string                `json:"escalationPhoneNumber,omitempty"`
-	GreetingText          *string                `json:"greetingText,omitempty"`
-	InboundGreeting       *string                `json:"inboundGreeting,omitempty"`
-	OutboundGreeting      *string                `json:"outboundGreeting,omitempty"`
-	GreetingMode          *string                `json:"greetingMode,omitempty"`
-	CallDirection         *string                `json:"callDirection,omitempty"`
-	PrimaryLanguage       *string                `json:"primaryLanguage,omitempty"`
-	AdditionalLanguages   []string               `json:"additionalLanguages,omitempty"`
-	SupportedLanguages    []string               `json:"supportedLanguages,omitempty"`
-	TelephonyProvider     *string                `json:"telephonyProvider,omitempty"`
-	STTProvider           *string                `json:"sttProvider,omitempty"`
-	TTSProvider           *string                `json:"ttsProvider,omitempty"`
-	STTKeyterms           []string               `json:"sttKeyterms,omitempty"`
-	SpeakingRate          *float64               `json:"speakingRate,omitempty"`
-	PauseBeforeSpeakingMs *int                   `json:"pauseBeforeSpeakingMs,omitempty"`
-	AllowInterruptions    *bool                  `json:"allowInterruptions,omitempty"`
-	SilenceBehavior       *string                `json:"silenceBehavior,omitempty"`
-	SilenceTimeoutSeconds *int                   `json:"silenceTimeoutSeconds,omitempty"`
-	VoiceBehavior         interface{}            `json:"voiceBehavior,omitempty"`
-	Guardrails            interface{}            `json:"guardrails,omitempty"`
-	ComplianceFlags       interface{}            `json:"complianceFlags,omitempty"`
+	Name                  string      `json:"name"`
+	Role                  string      `json:"role"`
+	Description           *string     `json:"description,omitempty"`
+	SystemPrompt          string      `json:"system_prompt"`
+	VoiceID               string      `json:"voice_id"`
+	VoiceProvider         string      `json:"voice_provider"`
+	VoiceName             string      `json:"voice_name"`
+	Language              string      `json:"language"`
+	Model                 string      `json:"model"`
+	Status                string      `json:"status,omitempty"`
+	AssignedPhone         *string     `json:"assigned_phone,omitempty"`
+	PhoneNumberID         *string     `json:"phone_number_id,omitempty"`
+	KnowledgeBaseIDs      []string    `json:"knowledge_base_ids,omitempty"`
+	ToolAllowlist         []string    `json:"tool_allowlist,omitempty"`
+	EscalationPhoneNumber *string     `json:"escalation_phone_number,omitempty"`
+	GreetingText          *string     `json:"greeting_text,omitempty"`
+	InboundGreeting       *string     `json:"inbound_greeting,omitempty"`
+	OutboundGreeting      *string     `json:"outbound_greeting,omitempty"`
+	GreetingMode          *string     `json:"greeting_mode,omitempty"`
+	CallDirection         *string     `json:"call_direction,omitempty"`
+	PrimaryLanguage       *string     `json:"primary_language,omitempty"`
+	AdditionalLanguages   []string    `json:"additional_languages,omitempty"`
+	SupportedLanguages    []string    `json:"supported_languages,omitempty"`
+	TelephonyProvider     *string     `json:"telephony_provider,omitempty"`
+	STTProvider           *string     `json:"stt_provider,omitempty"`
+	TTSProvider           *string     `json:"tts_provider,omitempty"`
+	STTKeyterms           []string    `json:"stt_keyterms,omitempty"`
+	SpeakingRate          *float64    `json:"speaking_rate,omitempty"`
+	PauseBeforeSpeakingMs *int        `json:"pause_before_speaking_ms,omitempty"`
+	AllowInterruptions    *bool       `json:"allow_interruptions,omitempty"`
+	SilenceBehavior       *string     `json:"silence_behavior,omitempty"`
+	SilenceTimeoutSeconds *int        `json:"silence_timeout_seconds,omitempty"`
+	VoiceBehavior         interface{} `json:"voice_behavior,omitempty"`
+	Guardrails            interface{} `json:"guardrails,omitempty"`
+	ComplianceFlags       interface{} `json:"compliance_flags,omitempty"`
 }
 
 type UpdateAgentRequest struct {
@@ -102,46 +96,38 @@ type UpdateAgentRequest struct {
 	Role                  *string     `json:"role,omitempty"`
 	Description           *string     `json:"description,omitempty"`
 	AvatarURL             *string     `json:"avatar_url,omitempty"`
-	AvatarURLAlt          *string     `json:"avatar,omitempty"`
 	SystemPrompt          *string     `json:"system_prompt,omitempty"`
-	SystemPromptAlt       *string     `json:"systemPrompt,omitempty"`
 	VoiceID               *string     `json:"voice_id,omitempty"`
-	VoiceIDAlt            *string     `json:"voiceId,omitempty"`
 	VoiceProvider         *string     `json:"voice_provider,omitempty"`
-	VoiceProviderAlt      *string     `json:"voiceProvider,omitempty"`
 	VoiceName             *string     `json:"voice_name,omitempty"`
-	VoiceNameAlt          *string     `json:"voiceName,omitempty"`
 	Language              *string     `json:"language,omitempty"`
 	Model                 *string     `json:"model,omitempty"`
 	Status                *string     `json:"status,omitempty"`
 	AssignedPhone         *string     `json:"assigned_phone,omitempty"`
-	PhoneNumber           *string     `json:"phoneNumber,omitempty"`
-	PhoneNumberID         *string     `json:"phoneNumberId,omitempty"`
-	PhoneNumberIDAlt      *string     `json:"phone_number_id,omitempty"`
-	KnowledgeBaseIDs      []string    `json:"knowledgeBaseIds,omitempty"`
-	KnowledgeBaseIDsAlt   []string    `json:"knowledge_base_ids,omitempty"`
-	ToolAllowlist         []string    `json:"toolAllowlist,omitempty"`
-	EscalationPhoneNumber *string     `json:"escalationPhoneNumber,omitempty"`
-	GreetingText          *string     `json:"greetingText,omitempty"`
-	InboundGreeting       *string     `json:"inboundGreeting,omitempty"`
-	OutboundGreeting      *string     `json:"outboundGreeting,omitempty"`
-	GreetingMode          *string     `json:"greetingMode,omitempty"`
-	CallDirection         *string     `json:"callDirection,omitempty"`
-	PrimaryLanguage       *string     `json:"primaryLanguage,omitempty"`
-	AdditionalLanguages   []string    `json:"additionalLanguages,omitempty"`
-	SupportedLanguages    []string    `json:"supportedLanguages,omitempty"`
-	TelephonyProvider     *string     `json:"telephonyProvider,omitempty"`
-	STTProvider           *string     `json:"sttProvider,omitempty"`
-	TTSProvider           *string     `json:"ttsProvider,omitempty"`
-	STTKeyterms           []string    `json:"sttKeyterms,omitempty"`
-	SpeakingRate          *float64    `json:"speakingRate,omitempty"`
-	PauseBeforeSpeakingMs *int        `json:"pauseBeforeSpeakingMs,omitempty"`
-	AllowInterruptions    *bool       `json:"allowInterruptions,omitempty"`
-	SilenceBehavior       *string     `json:"silenceBehavior,omitempty"`
-	SilenceTimeoutSeconds *int        `json:"silenceTimeoutSeconds,omitempty"`
-	VoiceBehavior         interface{} `json:"voiceBehavior,omitempty"`
+	PhoneNumberID         *string     `json:"phone_number_id,omitempty"`
+	KnowledgeBaseIDs      []string    `json:"knowledge_base_ids,omitempty"`
+	ToolAllowlist         []string    `json:"tool_allowlist,omitempty"`
+	EscalationPhoneNumber *string     `json:"escalation_phone_number,omitempty"`
+	GreetingText          *string     `json:"greeting_text,omitempty"`
+	InboundGreeting       *string     `json:"inbound_greeting,omitempty"`
+	OutboundGreeting      *string     `json:"outbound_greeting,omitempty"`
+	GreetingMode          *string     `json:"greeting_mode,omitempty"`
+	CallDirection         *string     `json:"call_direction,omitempty"`
+	PrimaryLanguage       *string     `json:"primary_language,omitempty"`
+	AdditionalLanguages   []string    `json:"additional_languages,omitempty"`
+	SupportedLanguages    []string    `json:"supported_languages,omitempty"`
+	TelephonyProvider     *string     `json:"telephony_provider,omitempty"`
+	STTProvider           *string     `json:"stt_provider,omitempty"`
+	TTSProvider           *string     `json:"tts_provider,omitempty"`
+	STTKeyterms           []string    `json:"stt_keyterms,omitempty"`
+	SpeakingRate          *float64    `json:"speaking_rate,omitempty"`
+	PauseBeforeSpeakingMs *int        `json:"pause_before_speaking_ms,omitempty"`
+	AllowInterruptions    *bool       `json:"allow_interruptions,omitempty"`
+	SilenceBehavior       *string     `json:"silence_behavior,omitempty"`
+	SilenceTimeoutSeconds *int        `json:"silence_timeout_seconds,omitempty"`
+	VoiceBehavior         interface{} `json:"voice_behavior,omitempty"`
 	Guardrails            interface{} `json:"guardrails,omitempty"`
-	ComplianceFlags       interface{} `json:"complianceFlags,omitempty"`
+	ComplianceFlags       interface{} `json:"compliance_flags,omitempty"`
 }
 
 type TopUpRequest struct {

@@ -15,6 +15,8 @@ package tests
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -129,6 +131,9 @@ func setupBillingTestEnvironment(t *testing.T) *billingTestHarness {
 
 	router := gin.New()
 	authMW := middleware.NewAuthMiddleware(cfg, logger)
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	authMW.SetTestPublicKey("phase4-key", &privKey.PublicKey)
 	wsMW := middleware.NewWorkspaceMiddleware(db, nil, "test", logger)
 
 	routes.RegisterAPIRoutes(router, routes.RouterDependencies{
@@ -175,8 +180,9 @@ func setupBillingTestEnvironment(t *testing.T) *billingTestHarness {
 		"email": "cfo@phase4enterprise.ai",
 		"exp":   time.Now().Add(time.Hour).Unix(),
 	}
-	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	token, err := jwtToken.SignedString([]byte(jwtSecret))
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	jwtToken.Header["kid"] = "phase4-key"
+	token, err := jwtToken.SignedString(privKey)
 	require.NoError(t, err)
 
 	return &billingTestHarness{

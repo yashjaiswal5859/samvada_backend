@@ -6,6 +6,8 @@ package api_test
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -41,6 +43,16 @@ import (
 
 const testJWTSecret = "samvada_jwt_super_secret_dev_2026_key"
 
+var (
+	testRSAPrivateKey *rsa.PrivateKey
+	testRSAPublicKey  *rsa.PublicKey
+)
+
+func init() {
+	testRSAPrivateKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+	testRSAPublicKey = &testRSAPrivateKey.PublicKey
+}
+
 func generateTestJWT(userID uuid.UUID, email, role string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":   userID.String(),
@@ -49,8 +61,9 @@ func generateTestJWT(userID uuid.UUID, email, role string) (string, error) {
 		"iat":   time.Now().Unix(),
 		"exp":   time.Now().Add(1 * time.Hour).Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(testJWTSecret))
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "test-abs-key"
+	return token.SignedString(testRSAPrivateKey)
 }
 
 func setupTestApp(t *testing.T) (*gin.Engine, *gorm.DB) {
@@ -89,6 +102,7 @@ func setupTestApp(t *testing.T) (*gin.Engine, *gorm.DB) {
 	campaignRepo := repos.NewCampaignRepository(db)
 	telephonyRepo := repos.NewTelephonyRepository(db)
 	integrationRepo := repos.NewIntegrationRepository(db)
+	profileRepo := repos.NewProfileRepository(db)
 
 	// Services
 	orgService := appOrg.NewOrgService(orgRepo, wsRepo, billingRepo, logger)
@@ -102,10 +116,11 @@ func setupTestApp(t *testing.T) (*gin.Engine, *gorm.DB) {
 
 	// Middleware
 	authMW := middleware.NewAuthMiddleware(cfg, logger)
+	authMW.SetTestPublicKey("test-abs-key", testRSAPublicKey)
 	wsMW := middleware.NewWorkspaceMiddleware(db, nil, "test", logger)
 
 	// Handlers
-	orgHandler := handlers.NewOrgHandler(orgService, walletService)
+	orgHandler := handlers.NewOrgHandler(orgService, walletService, profileRepo)
 	wsHandler := handlers.NewWorkspaceHandler(wsService)
 	agentHandler := handlers.NewAgentHandler(agentService, wsService, walletService, nil, cfg.Auth.JWTSecret)
 	billingHandler := handlers.NewBillingHandler(walletService, wsService, nil, nil, nil)

@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     language VARCHAR(50) NOT NULL DEFAULT 'en',
     avatar_url TEXT NOT NULL DEFAULT '',
     bio TEXT NOT NULL DEFAULT '',
+    onboarding_completed BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );

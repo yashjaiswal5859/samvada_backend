@@ -263,6 +263,10 @@ func (r *callRepo) ListCalls(ctx context.Context, filter domain.CallFilter) ([]*
 		events = append(events, &ev)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterating call rows: %w", err)
+	}
+
 	return events, total, nil
 }
 
@@ -292,6 +296,10 @@ func (r *callRepo) GetCallTurns(ctx context.Context, callID uuid.UUID) ([]*domai
 			return nil, err
 		}
 		turns = append(turns, &t)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating call turn rows: %w", err)
 	}
 
 	return turns, nil

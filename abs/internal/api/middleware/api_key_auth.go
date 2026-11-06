@@ -6,6 +6,7 @@ package middleware
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"strings"
@@ -95,7 +96,7 @@ func (m *APIKeyMiddleware) RequireAPIKey() gin.HandlerFunc {
 
 		var matchedKey *domain.APIKey
 		for _, k := range keys {
-			if k.HashedSecret == hashedSecret {
+			if subtle.ConstantTimeCompare([]byte(k.HashedSecret), []byte(hashedSecret)) == 1 {
 				matchedKey = k
 				break
 			}

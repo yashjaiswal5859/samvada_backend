@@ -13,6 +13,8 @@ package tests
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -117,6 +119,9 @@ func setupTestEnvironment(t *testing.T) (*gin.Engine, *gorm.DB, uuid.UUID, uuid.
 
 	router := gin.New()
 	authMW := middleware.NewAuthMiddleware(cfg, logger)
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	authMW.SetTestPublicKey("phase3-key", &privKey.PublicKey)
 	wsMW := middleware.NewWorkspaceMiddleware(db, nil, "test", logger)
 
 	routes.RegisterAPIRoutes(router, routes.RouterDependencies{
@@ -148,14 +153,15 @@ func setupTestEnvironment(t *testing.T) (*gin.Engine, *gorm.DB, uuid.UUID, uuid.
 	_ = db.Exec("INSERT INTO workspace_members (id, workspace_id, user_id, workspace_role) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
 		uuid.New(), ws.ID, testUserID.String(), "workspace_admin").Error
 
-	// Mint JWT token for auth header
+	// Mint JWT token for auth header (RS256)
 	claims := jwt.MapClaims{
 		"sub":   testUserID.String(),
 		"email": "admin@phase3.test",
 		"exp":   time.Now().Add(time.Hour).Unix(),
 	}
-	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	token, err := jwtToken.SignedString([]byte(jwtSecret))
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	jwtToken.Header["kid"] = "phase3-key"
+	token, err := jwtToken.SignedString(privKey)
 	require.NoError(t, err)
 
 	return router, db, org.ID, ws.ID, token

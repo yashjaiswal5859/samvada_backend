@@ -51,6 +51,18 @@ func NewWorkspaceMiddleware(db *gorm.DB, rdb *redis.Client, appEnv string, log *
 	}
 }
 
+func (m *WorkspaceMiddleware) DB() *gorm.DB {
+	return m.db
+}
+
+func (m *WorkspaceMiddleware) Redis() *redis.Client {
+	return m.redis
+}
+
+func (m *WorkspaceMiddleware) AppEnv() string {
+	return m.appEnv
+}
+
 // ResolveWorkspace extracts workspace ID without strictly requiring it (for optional workspace routes).
 func (m *WorkspaceMiddleware) ResolveWorkspace() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -86,14 +98,6 @@ func (m *WorkspaceMiddleware) RequireWorkspace() gin.HandlerFunc {
 					"message": "Authentication required prior to workspace validation.",
 				},
 			})
-			return
-		}
-
-		// Development bypass for automated tests
-		if m.appEnv == "development" && c.GetHeader("X-Dev-User-ID") != "" {
-			c.Set(ContextWorkspaceIDKey, wsID)
-			c.Set(ContextWorkspaceRoleKey, "workspace_admin")
-			c.Next()
 			return
 		}
 

@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,24 +95,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	// 1. Resolve aliases between camelCase and snake_case
-	if req.VoiceID == "" && req.VoiceIDAlt != "" {
-		req.VoiceID = req.VoiceIDAlt
-	}
-	if req.VoiceProvider == "" && req.VoiceProviderAlt != "" {
-		req.VoiceProvider = req.VoiceProviderAlt
-	}
-	if req.VoiceName == "" && req.VoiceNameAlt != "" {
-		req.VoiceName = req.VoiceNameAlt
-	}
-	if req.SystemPrompt == "" && req.SystemPromptAlt != "" {
-		req.SystemPrompt = req.SystemPromptAlt
-	}
-	if req.PhoneNumberID == nil && req.PhoneNumberIDAlt != nil {
-		req.PhoneNumberID = req.PhoneNumberIDAlt
-	}
-
-	// 2. Intelligent defaults
+	// 1. Intelligent defaults
 	if req.Name == "" {
 		req.Name = "AI Voice Assistant"
 	}
@@ -137,7 +122,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		req.Model = "gpt-4o-mini"
 	}
 
-	// 3. Resolve Phone Number from ID if passed
+	// 2. Resolve Phone Number from ID if passed
 	if req.AssignedPhone == nil && req.PhoneNumberID != nil && *req.PhoneNumberID != "" {
 		if pnID, parseErr := uuid.Parse(*req.PhoneNumberID); parseErr == nil && h.telephonyService != nil {
 			if pn, pnErr := h.telephonyService.GetNumber(c.Request.Context(), wsID, pnID); pnErr == nil && pn != nil {
@@ -239,27 +224,7 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// 1. Resolve aliases between camelCase and snake_case
-	if req.SystemPrompt == nil && req.SystemPromptAlt != nil {
-		req.SystemPrompt = req.SystemPromptAlt
-	}
-	if req.VoiceID == nil && req.VoiceIDAlt != nil {
-		req.VoiceID = req.VoiceIDAlt
-	}
-	if req.VoiceProvider == nil && req.VoiceProviderAlt != nil {
-		req.VoiceProvider = req.VoiceProviderAlt
-	}
-	if req.VoiceName == nil && req.VoiceNameAlt != nil {
-		req.VoiceName = req.VoiceNameAlt
-	}
-	if req.AvatarURL == nil && req.AvatarURLAlt != nil {
-		req.AvatarURL = req.AvatarURLAlt
-	}
-	if req.AssignedPhone == nil && req.PhoneNumber != nil {
-		req.AssignedPhone = req.PhoneNumber
-	}
-
-	// 2. Resolve phone number from ID if provided
+	// 1. Resolve phone number from ID if provided
 	if req.PhoneNumberID != nil && *req.PhoneNumberID != "" && h.telephonyService != nil {
 		if pnID, parseErr := uuid.Parse(*req.PhoneNumberID); parseErr == nil {
 			if pn, pnErr := h.telephonyService.GetNumber(c.Request.Context(), wsID, pnID); pnErr == nil && pn != nil {
@@ -440,12 +405,24 @@ func (h *AgentHandler) MintTestToken(c *gin.Context) {
 
 	ticket := fmt.Sprintf("%s.%s", payload, signature)
 
+	wssHost := os.Getenv("S2S_PUBLIC_WSS_URL")
+	if wssHost == "" {
+		host := c.Request.Host
+		if host != "" {
+			hostName := strings.Split(host, ":")[0]
+			wssHost = fmt.Sprintf("ws://%s:8084", hostName)
+		} else {
+			wssHost = "ws://localhost:8084"
+		}
+	}
+	resolvedWSS := fmt.Sprintf("%s/v1/audio/stream?ticket=%s", strings.TrimRight(wssHost, "/"), ticket)
+
 	RespondSuccess(c, http.StatusOK, gin.H{
 		"ticket":               ticket,
 		"testToken":            ticket,
 		"test_token":           ticket,
-		"wssUrl":               fmt.Sprintf("ws://localhost:8084/v1/audio/stream?ticket=%s", ticket),
-		"wss_url":              fmt.Sprintf("ws://localhost:8084/v1/audio/stream?ticket=%s", ticket),
+		"wssUrl":               resolvedWSS,
+		"wss_url":              resolvedWSS,
 		"remainingCreditUSD":   remainingCreditUSD,
 		"remaining_credit_usd": remainingCreditUSD,
 		"maxDurationSec":       300,

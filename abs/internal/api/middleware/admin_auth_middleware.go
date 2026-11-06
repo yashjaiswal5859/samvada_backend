@@ -27,6 +27,7 @@ import (
 
 	"github.com/samvada/abs/internal/application/admin"
 	"github.com/samvada/abs/internal/infrastructure/keto"
+	apperrors "github.com/samvada/proto/pkg/errors"
 )
 
 // AdminAuthMiddleware validates admin dual-token requests and checks Ory Keto roles.
@@ -59,11 +60,11 @@ func NewAdminAuthMiddleware(
 func (m *AdminAuthMiddleware) RequireAdminKeto() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. Extract Bearer Access Token from Authorization header
-		authHeader := c.GetHeader("Authorization")
+		authHeader := c.GetHeader(HeaderAuthorization)
 		tokenString := ""
 		if authHeader != "" {
 			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+			if len(parts) == 2 && strings.EqualFold(parts[0], BearerPrefix) {
 				tokenString = strings.TrimSpace(parts[1])
 			}
 		}
@@ -128,7 +129,7 @@ func (m *AdminAuthMiddleware) RequireAdminKeto() gin.HandlerFunc {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"success": false,
 					"error": gin.H{
-						"code":    "TOKEN_EXPIRED",
+						"code":    apperrors.CodeTokenExpired,
 						"message": "Admin access token has expired. Re-authenticate or refresh token pair.",
 					},
 				})
@@ -138,8 +139,8 @@ func (m *AdminAuthMiddleware) RequireAdminKeto() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"error": gin.H{
-					"code":    "INVALID_TOKEN",
-					"message": "Invalid token signature or malformed payload.",
+					"code":    apperrors.CodeInvalidToken,
+					"message": MsgInvalidToken,
 				},
 			})
 			return
@@ -149,8 +150,8 @@ func (m *AdminAuthMiddleware) RequireAdminKeto() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"error": gin.H{
-					"code":    "UNAUTHORIZED",
-					"message": "Access token is not valid.",
+					"code":    apperrors.CodeInvalidToken,
+					"message": MsgTokenNotValid,
 				},
 			})
 			return

@@ -6,6 +6,8 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -38,15 +40,18 @@ func RateLimit(rdb *redis.Client, maxReqPerMin int) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		// Identify client by Bearer Token, API Key, or Client IP
-		key := c.GetHeader("Authorization")
-		if key == "" {
-			key = c.GetHeader("X-API-Key")
+		identifier := c.GetHeader("Authorization")
+		if identifier == "" {
+			identifier = c.GetHeader("X-API-Key")
 		}
-		if key == "" {
-			key = c.ClientIP()
+		if identifier == "" {
+			identifier = c.ClientIP()
 		}
 
-		rateKey := fmt.Sprintf("samvada:ratelimit:%s:%d", key, time.Now().Unix()/60)
+		// Security: Hash identifier to avoid leaking raw Bearer JWTs or API keys in Redis keyspace
+		h := sha256.Sum256([]byte(identifier))
+		hashedKey := hex.EncodeToString(h[:8])
+		rateKey := fmt.Sprintf("samvada:ratelimit:%s:%d", hashedKey, time.Now().Unix()/60)
 
 		// 1. Try Redis rate limiting
 		if rdb != nil && rdb.Raw() != nil {
@@ -86,11 +91,20 @@ func RateLimit(rdb *redis.Client, maxReqPerMin int) gin.HandlerFunc {
 
 		// 2. In-memory fallback
 		memLimiter.mu.Lock()
-		b, exists := memLimiter.buckets[key]
+		// Evict stale buckets if memory map exceeds threshold to prevent DDoS memory exhaustion
+		if len(memLimiter.buckets) > 5000 {
+			for k, v := range memLimiter.buckets {
+				if time.Since(v.lastReset) > 2*time.Minute {
+					delete(memLimiter.buckets, k)
+				}
+			}
+		}
+
+		b, exists := memLimiter.buckets[hashedKey]
 		now := time.Now()
 		if !exists || now.Sub(b.lastReset) > time.Minute {
 			b = &bucket{tokens: maxReqPerMin - 1, lastReset: now}
-			memLimiter.buckets[key] = b
+			memLimiter.buckets[hashedKey] = b
 			memLimiter.mu.Unlock()
 			c.Header("X-RateLimit-Limit", strconv.Itoa(maxReqPerMin))
 			c.Header("X-RateLimit-Remaining", strconv.Itoa(maxReqPerMin-1))

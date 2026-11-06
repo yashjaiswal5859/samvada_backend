@@ -549,8 +549,8 @@ services:
   # ---------------------------------------------------------------------------
   docling-worker:
     build:
-      context: .
-      dockerfile: docling-worker/Dockerfile
+      context: docling-worker
+      dockerfile: Dockerfile
     container_name: samvada-docling-worker
     restart: unless-stopped
     environment:
@@ -613,3 +613,4 @@ volumes:
 networks:
   samvada-net:
     driver: bridge
+    name: samvada-network

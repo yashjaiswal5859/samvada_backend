@@ -37,6 +37,12 @@ const (
 	CodeCallUnauthorized   = "CALL_UNAUTHORIZED"
 	CodeInternal           = "INTERNAL_SERVER_ERROR"
 	CodeServiceUnavailable = "SERVICE_UNAVAILABLE"
+
+	// Auth-specific error codes — used by JWT middleware across all services
+	// to communicate token state to frontend Axios interceptors.
+	CodeTokenExpired = "TOKEN_EXPIRED"
+	CodeInvalidToken = "INVALID_TOKEN"
+	CodeTokenMissing = "TOKEN_MISSING"
 )
 
 // AppError is the standard structured error envelope across REST and gRPC boundaries.
