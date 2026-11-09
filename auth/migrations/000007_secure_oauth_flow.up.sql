@@ -1,0 +1,2 @@
+ALTER TABLE oauth_sessions ADD COLUMN login_challenge TEXT;
+ALTER TABLE oauth_sessions ADD COLUMN used BOOLEAN NOT NULL DEFAULT FALSE;

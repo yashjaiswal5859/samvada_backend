@@ -1,0 +1,6 @@
+ACME Corp Product Catalog:
+1. Starter Plan: $49/mo (Includes basic AI capabilities)
+2. Pro Plan: $199/mo (Includes custom integrations and dedicated support)
+3. Enterprise Plan: Custom pricing
+
+Return Policy: 30-day money-back guarantee for all new customers. No questions asked.

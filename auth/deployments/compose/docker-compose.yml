@@ -1,0 +1,285 @@
+networks:
+  auth-network:
+    name: auth-network
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  kratos-data:
+  hydra-data:
+  keto-data:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: auth_postgres
+    networks:
+      - auth-network
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ridesafety
+      POSTGRES_PASSWORD: ridesafety_pass
+      POSTGRES_DB: ridesafety_auth
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ridesafety -d ridesafety_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: auth_redis
+    networks:
+      - auth-network
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: auth_kafka
+    networks:
+      - auth-network
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    networks:
+      - auth-network
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    networks:
+      - auth-network
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  kratos-migrate:
+    image: oryd/kratos:v0.13.0
+    container_name: kratos-migrate
+    networks:
+      - auth-network
+    environment:
+      - DSN=postgres://ridesafety:ridesafety_pass@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - ../../configs/kratos:/etc/config/kratos
+    command: migrate sql -e --yes --config /etc/config/kratos/kratos.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kratos:
+    image: oryd/kratos:v0.13.0
+    container_name: kratos
+    networks:
+      - auth-network
+    ports:
+      - "4433:4433"
+      - "4434:4434"
+    volumes:
+      - ../../configs/kratos:/etc/config/kratos
+      - kratos-data:/var/lib/kratos
+    command: serve --config /etc/config/kratos/kratos.yml --dev --watch-courier
+    environment:
+      - DSN=postgres://ridesafety:ridesafety_pass@postgres:5432/kratos?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kratos-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4433/health/ready || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  hydra-migrate:
+    image: oryd/hydra:v1.11.8
+    container_name: hydra-migrate
+    networks:
+      - auth-network
+    environment:
+      - DSN=postgres://ridesafety:ridesafety_pass@postgres:5432/hydra?sslmode=disable
+    volumes:
+      - ../../configs/hydra:/etc/config/hydra
+    command: migrate sql -e --yes --config /etc/config/hydra/hydra.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  hydra:
+    image: oryd/hydra:v1.11.8
+    container_name: hydra
+    networks:
+      - auth-network
+    ports:
+      - "4444:4444"
+      - "4445:4445"
+    volumes:
+      - ../../configs/hydra:/etc/config/hydra
+      - hydra-data:/var/lib/hydra
+    command: serve all --dangerous-force-http --config /etc/config/hydra/hydra.yml
+    environment:
+      - DSN=postgres://ridesafety:ridesafety_pass@postgres:5432/hydra?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hydra-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4445/health/ready || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  keto-migrate:
+    image: oryd/keto:v0.8.0-alpha.2
+    container_name: keto-migrate
+    networks:
+      - auth-network
+    environment:
+      - DSN=postgres://ridesafety:ridesafety_pass@postgres:5432/keto?sslmode=disable
+    volumes:
+      - ../../configs/keto:/etc/config/keto
+    command: migrate up --config /etc/config/keto/keto.yml --yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  keto:
+    image: oryd/keto:v0.8.0-alpha.2
+    container_name: keto
+    networks:
+      - auth-network
+    ports:
+      - "4466:4466"
+      - "4467:4467"
+    volumes:
+      - ../../configs/keto:/etc/config/keto
+      - keto-data:/var/lib/keto
+    command: serve --config /etc/config/keto/keto.yml
+    environment:
+      - DSN=postgres://ridesafety:ridesafety_pass@postgres:5432/keto?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keto-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:4466/health/ready || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: auth-service
+    networks:
+      - auth-network
+    ports:
+      - "8082:8080"
+    environment:
+      - PORT=8080
+      - ENV=local
+      - READ_TIMEOUT=15s
+      - WRITE_TIMEOUT=15s
+      - SHUTDOWN_TIMEOUT=10s
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=ridesafety
+      - DB_PASSWORD=ridesafety_pass
+      - DB_NAME=ridesafety_auth
+      - DB_SSLMODE=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - KAFKA_BROKERS=kafka:29092
+      - KRATOS_ADMIN_URL=http://kratos:4434
+      - KRATOS_PUBLIC_URL=http://kratos:4433
+      - HYDRA_ADMIN_URL=http://hydra:4445
+      - HYDRA_PUBLIC_URL=http://hydra:4444
+      - KETO_WRITE_URL=http://keto:4467
+      - KETO_READ_URL=http://keto:4466
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kratos:
+        condition: service_healthy
+      hydra:
+        condition: service_healthy
+      keto:
+        condition: service_healthy
+
+#  notification-service:
+#    build:
+#      context: ../../../notification
+#      dockerfile: Dockerfile
+#    container_name: notification-service
+#    networks:
+#      - auth-network
+#    environment:
+#      - ENV=local
+#      - KAFKA_BROKERS=kafka:29092
+#      - KAFKA_CLIENT_ID=notification-service
+#      - KAFKA_GROUP_ID=notification-service-group
+#      - KAFKA_TOPIC_OTP_SEND=auth.email.send
+#      - SMTP_HOST=mailpit
+#      - SMTP_PORT=1025
+#      - SMTP_FROM_EMAIL=no-reply@samvada.ai
+#      - SMTP_FROM_NAME="Samvada Auth"
+#      - TEMPLATES_DIR=templates
+#    depends_on:
+#      kafka:
+#        condition: service_healthy
+#      mailpit:
+#        condition: service_started

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>system design interview qa</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.7;
+    color: #1a1a2e;
+    background: #fff;
+    padding: 40px 60px;
+    max-width: 900px;
+    margin: 0 auto;
+    font-size: 14px;
+  }
+  
+  h1 { font-size: 28px; font-weight: 700; color: #0f0f23; margin: 30px 0 15px; border-bottom: 3px solid #4361ee; padding-bottom: 10px; }
+  h2 { font-size: 22px; font-weight: 600; color: #16213e; margin: 25px 0 12px; border-bottom: 1px solid #e0e0e0; padding-bottom: 8px; }
+  h3 { font-size: 17px; font-weight: 600; color: #1a1a2e; margin: 20px 0 10px; }
+  h4 { font-size: 15px; font-weight: 600; color: #333; margin: 15px 0 8px; }
+  
+  p { margin: 8px 0; }
+  
+  strong { color: #0f0f23; }
+  
+  code {
+    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    background: #f4f4f8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    color: #e74c3c;
+  }
+  
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border: 1px solid #313244;
+  }
+  
+  pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+  }
+  
+  blockquote {
+    border-left: 4px solid #4361ee;
+    padding: 10px 20px;
+    margin: 15px 0;
+    background: #f8f9ff;
+    border-radius: 0 6px 6px 0;
+    color: #444;
+  }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    font-size: 13px;
+  }
+  
+  th {
+    background: #4361ee;
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+  
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #e8e8e8;
+  }
+  
+  tr:nth-child(even) td { background: #f8f9fa; }
+  tr:hover td { background: #eef1ff; }
+  
+  ul, ol { margin: 8px 0; padding-left: 25px; }
+  li { margin: 4px 0; }
+  
+  hr {
+    border: none;
+    border-top: 2px solid #e0e0e0;
+    margin: 30px 0;
+  }
+  
+  a { color: #4361ee; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  
+  /* Mermaid diagrams - show as code in PDF */
+  .mermaid-placeholder {
+    background: #f0f4ff;
+    border: 2px dashed #4361ee;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 15px 0;
+    text-align: center;
+    color: #4361ee;
+    font-style: italic;
+  }
+  
+  @media print {
+    body { padding: 20px 30px; font-size: 12px; }
+    pre { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+    h1, h2, h3 { page-break-after: avoid; }
+    hr { page-break-after: avoid; }
+  }
+</style>
+<script>
+// We'll use marked.js CDN for rendering
+</script>
+</head>
+<body>
+<div id="content"></div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+const md = "# System Design & Architecture — Interview Questions & Answers\n\n> A comprehensive guide covering SOLID principles, distributed systems, microservices, databases, and architectural patterns.\n\n---\n\n## Table of Contents\n\n1. [SOLID Principles](#1-solid-principles)\n2. [Object-Oriented Design & Design Patterns](#2-object-oriented-design--design-patterns)\n3. [Distributed Systems Core Concepts](#3-distributed-systems-core-concepts)\n4. [Microservices Architecture](#4-microservices-architecture)\n5. [Database & Storage Systems](#5-database--storage-systems)\n6. [Caching & Performance](#6-caching--performance)\n7. [Message Queues & Event-Driven Architecture](#7-message-queues--event-driven-architecture)\n8. [System Design Approaching the Interview](#8-system-design-approaching-the-interview)\n\n---\n\n## 1. SOLID Principles\n\n### Q1.1: What are the SOLID principles? Explain each one.\n**Answer:** SOLID is an acronym for 5 design principles intended to make software designs more understandable, flexible, and maintainable.\n\n1.  **Single Responsibility Principle (SRP):** A class should have one, and only one, reason to change. Meaning that a class should only have one job or responsibility.\n2.  **Open/Closed Principle (OCP):** Objects or entities should be open for extension but closed for modification. You should be able to add new functionality without changing existing code (e.g., using interfaces or abstract classes).\n3.  **Liskov Substitution Principle (LSP):** Objects in a program should be replaceable with instances of their subtypes without altering the correctness of that program. A subclass must override the base class methods in a way that does not break functionality from a client's point of view.\n4.  **Interface Segregation Principle (ISP):** Many client-specific interfaces are better than one general-purpose interface. No client should be forced to depend on methods it does not use.\n5.  **Dependency Inversion Principle (DIP):** Depend upon abstractions, not concretions. High-level modules should not depend on low-level modules; both should depend on abstractions.\n\n### Q1.2: Give a practical example of violating and fixing the Open/Closed Principle (OCP).\n**Answer:**\n**Violation:** A `NotificationService` class with a `sendNotification` method that checks the type (`if type == 'email' ... else if type == 'sms' ...`). If we add 'push' notifications, we must modify the existing class.\n**Fix:** Create a `Notification` interface with a `send()` method. Create concrete classes `EmailNotification`, `SMSNotification`, and `PushNotification` implementing the interface. The `NotificationService` takes a `Notification` object and calls `.send()`, allowing us to add new notification types without changing `NotificationService`.\n\n---\n\n## 2. Object-Oriented Design & Design Patterns\n\n### Q2.1: Explain the Singleton pattern and its drawbacks.\n**Answer:** The Singleton pattern ensures that a class has only one instance and provides a global point of access to it.\n**Drawbacks:**\n*   It introduces global state into an application, making testing difficult (dependencies cannot be easily mocked).\n*   It violates the Single Responsibility Principle by controlling its own creation and lifecycle.\n*   In multi-threaded environments, lazy initialization of a Singleton requires careful synchronization (e.g., double-checked locking) to prevent multiple instances from being created.\n\n### Q2.2: When would you use a Factory Pattern?\n**Answer:** A Factory Pattern is used when:\n*   The exact types and dependencies of the objects you want to create are unknown beforehand.\n*   You want to decouple the object creation logic from the system that uses the object.\n*   You want to localize the knowledge of which class gets instantiated. (e.g., parsing different types of documents like PDF, Word, XML based on file extension).\n\n---\n\n## 3. Distributed Systems Core Concepts\n\n### Q3.1: What is the CAP Theorem?\n**Answer:** The CAP Theorem states that a distributed data store can simultaneously provide at most two out of the following three guarantees:\n*   **Consistency:** Every read receives the most recent write or an error. All nodes see the same data at the same time.\n*   **Availability:** Every request receives a (non-error) response, without the guarantee that it contains the most recent write.\n*   **Partition Tolerance:** The system continues to operate despite an arbitrary number of messages being dropped (or delayed) by the network between nodes.\nSince network partitions (P) are a given in distributed systems, architects must trade off between Consistency (CP) and Availability (AP).\n\n### Q3.2: Explain Eventual Consistency vs. Strong Consistency.\n**Answer:**\n*   **Strong Consistency:** After a write completes, any subsequent read will return the updated value. This often requires locking and can impact availability/latency (e.g., traditional RDBMS).\n*   **Eventual Consistency:** If no new updates are made to a given data item, eventually all accesses to that item will return the last updated value. It prioritizes availability and low latency (e.g., DNS, Amazon DynamoDB in eventual mode).\n\n---\n\n## 4. Microservices Architecture\n\n### Q4.1: Microservices vs. Monolith: When to choose which?\n**Answer:**\n*   **Monolith:** Best for small teams, simple applications, fast initial iteration, and domains with tightly coupled logic. Easier to deploy, test, and debug initially.\n*   **Microservices:** Best for large teams (enabling independent scaling and deployments), complex domains that can be naturally bounded, applications requiring diverse technology stacks, and systems needing high availability (failure isolation). Drawbacks include operational complexity, network latency, and distributed data management.\n\n### Q4.2: How do microservices communicate with each other?\n**Answer:**\n*   **Synchronous:** REST over HTTP, gRPC (using Protocol Buffers). Pros: Immediate response, easy to understand. Cons: Tight coupling, cascading failures, blocks thread.\n*   **Asynchronous:** Message queues (RabbitMQ, SQS) or Event brokers (Kafka). Pros: Decoupling, fault tolerance, handles traffic spikes (buffering). Cons: Eventual consistency, complex debugging/tracing.\n\n### Q4.3: What is the Saga Pattern?\n**Answer:** The Saga pattern is a sequence of local transactions. Each local transaction updates the database and publishes a message or event to trigger the next local transaction in the saga. If a local transaction fails, the saga executes a series of **compensating transactions** that undo the changes that were made by the preceding local transactions. It is used to maintain data consistency across microservices without distributed transactions (2PC).\n\n---\n\n## 5. Database & Storage Systems\n\n### Q5.1: Relational (SQL) vs. Non-Relational (NoSQL) Databases.\n**Answer:**\n*   **SQL (PostgreSQL, MySQL):** Structured data, predefined schema, ACID transactions, strong consistency. Good for complex queries, financial systems, and structured relationships. Scales vertically (usually).\n*   **NoSQL (MongoDB, Cassandra, DynamoDB):** Unstructured/semi-structured data, dynamic schema, eventual consistency (BASE), horizontally scalable.\n    *   *Key-Value:* Redis, DynamoDB. Fast lookups.\n    *   *Document:* MongoDB. Flexible schemas.\n    *   *Columnar:* Cassandra. High write throughput, time-series data.\n    *   *Graph:* Neo4j. Highly connected data (social networks).\n\n### Q5.2: What is Database Sharding?\n**Answer:** Sharding is a method of horizontal partitioning that splits a large database into smaller, faster, more easily managed parts called data shards. Each shard is held on a separate database server instance, to spread the load.\n*   **Challenges:** Joins across shards are slow/impossible, transactions across shards are complex, resharding (rebalancing data) when a shard gets full is difficult.\n\n---\n\n## 6. Caching & Performance\n\n### Q6.1: What are common Cache Eviction Policies?\n**Answer:**\n*   **LRU (Least Recently Used):** Discards the least recently used items first. Most common general-purpose cache policy.\n*   **LFU (Least Frequently Used):** Discards the items accessed least often. Good for items with a distinct popularity curve.\n*   **FIFO (First In First Out):** Discards the oldest items first, regardless of access patterns.\n\n### Q6.2: Describe Cache Penetration, Cache Breakdown, and Cache Avalanche.\n**Answer:**\n*   **Cache Penetration:** A request for a non-existent key goes through the cache directly to the DB. If attackers request many non-existent keys, the DB can crash. *Fix: Cache null values with short TTL, or use a Bloom Filter.*\n*   **Cache Breakdown:** A highly accessed (\"hot\") key expires, and simultaneously a massive number of requests hit the cache, miss, and hit the DB. *Fix: Mutex locks so only one thread fetches from DB to populate cache, or never expire the key (background updates).*\n*   **Cache Avalanche:** A large number of cache keys expire at the exact same time, causing a spike in DB queries. *Fix: Add a random jitter (e.g., 1-5 minutes) to the TTL of keys.*\n\n---\n\n## 7. Message Queues & Event-Driven Architecture\n\n### Q7.1: RabbitMQ vs. Apache Kafka. Which one to choose?\n**Answer:**\n*   **RabbitMQ:** A traditional message broker (smart broker, dumb consumer). Messages are pushed to consumers and deleted once acknowledged. Excellent for task queues, complex routing (exchanges), and point-to-point communication.\n*   **Apache Kafka:** A distributed event streaming platform (dumb broker, smart consumer). Events are appended to a log and persisted for a configured time. Multiple consumer groups can read the same stream independently. Excellent for high-throughput stream processing, event sourcing, and log aggregation.\n\n### Q7.2: What is the Outbox Pattern?\n**Answer:** It solves the problem of atomically updating the database and sending messages to a message broker. Instead of directly publishing a message (which might fail after a DB commit), the service writes the event to an `outbox` table in the *same* database transaction as the business entity update. A separate background process (or CDC like Debezium) reads the outbox table and reliably publishes the events to the broker.\n\n---\n\n## 8. System Design Approaching the Interview\n\n### Q8.1: What are the steps to approach a System Design interview question?\n**Answer:**\n1.  **Requirements Clarification (5 mins):** Define functional (what the system does) and non-functional requirements (scale, latency, availability).\n2.  **Back-of-the-envelope Estimation (5 mins):** Estimate QPS (Queries Per Second), storage, and bandwidth to understand the scale.\n3.  **High-Level Design (10 mins):** Draw the core components (Client, Load Balancer, Web Servers, Database) and data flow.\n4.  **Detailed Design (15 mins):** Deep dive into 2-3 key components. Discuss database schema, caching, partitioning, API design.\n5.  **Identify Bottlenecks & Resolve (10 mins):** Discuss single points of failure, scalability bottlenecks, and how to fix them (e.g., adding caches, sharding, async processing).\n\n> **Last Updated:** July 2026 | **Focus:** System Design & Architecture\n";
+document.getElementById('content').innerHTML = marked.parse(md);
+</script>
+</body>
+</html>

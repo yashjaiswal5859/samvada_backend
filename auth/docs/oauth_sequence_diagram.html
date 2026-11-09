@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>oauth sequence diagram</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.7;
+    color: #1a1a2e;
+    background: #fff;
+    padding: 40px 60px;
+    max-width: 900px;
+    margin: 0 auto;
+    font-size: 14px;
+  }
+  
+  h1 { font-size: 28px; font-weight: 700; color: #0f0f23; margin: 30px 0 15px; border-bottom: 3px solid #4361ee; padding-bottom: 10px; }
+  h2 { font-size: 22px; font-weight: 600; color: #16213e; margin: 25px 0 12px; border-bottom: 1px solid #e0e0e0; padding-bottom: 8px; }
+  h3 { font-size: 17px; font-weight: 600; color: #1a1a2e; margin: 20px 0 10px; }
+  h4 { font-size: 15px; font-weight: 600; color: #333; margin: 15px 0 8px; }
+  
+  p { margin: 8px 0; }
+  
+  strong { color: #0f0f23; }
+  
+  code {
+    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    background: #f4f4f8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    color: #e74c3c;
+  }
+  
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border: 1px solid #313244;
+  }
+  
+  pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+  }
+  
+  blockquote {
+    border-left: 4px solid #4361ee;
+    padding: 10px 20px;
+    margin: 15px 0;
+    background: #f8f9ff;
+    border-radius: 0 6px 6px 0;
+    color: #444;
+  }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    font-size: 13px;
+  }
+  
+  th {
+    background: #4361ee;
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+  
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #e8e8e8;
+  }
+  
+  tr:nth-child(even) td { background: #f8f9fa; }
+  tr:hover td { background: #eef1ff; }
+  
+  ul, ol { margin: 8px 0; padding-left: 25px; }
+  li { margin: 4px 0; }
+  
+  hr {
+    border: none;
+    border-top: 2px solid #e0e0e0;
+    margin: 30px 0;
+  }
+  
+  a { color: #4361ee; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  
+  /* Mermaid diagrams - show as code in PDF */
+  .mermaid-placeholder {
+    background: #f0f4ff;
+    border: 2px dashed #4361ee;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 15px 0;
+    text-align: center;
+    color: #4361ee;
+    font-style: italic;
+  }
+  
+  @media print {
+    body { padding: 20px 30px; font-size: 12px; }
+    pre { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+    h1, h2, h3 { page-break-after: avoid; }
+    hr { page-break-after: avoid; }
+  }
+</style>
+<script>
+// We'll use marked.js CDN for rendering
+</script>
+</head>
+<body>
+<div id="content"></div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+const md = "# SafeRide OAuth 2.0 + OTP + SSO Sequence Diagrams\n\nThis document contains detailed sequence diagrams mapping out all security checks, cookie validations, and distributed service calls executed during user registration, automatic post-registration login, and standard login.\n\n---\n\n## 1. Registration Flow with Automatic Login (Phases 1–4)\n\nThis diagram outlines the registration cookie-binding flow, OTP verification, local database transaction + Ory provisioning with failure compensation, and the automatic transition into the OIDC authorization code flow.\n\n```mermaid\nsequenceDiagram\n    autonumber\n    actor User\n    participant Browser as Browser/Frontend\n    participant Backend as Auth Service (Backend)\n    participant Redis as Redis Cache\n    participant Kratos as Ory Kratos\n    participant Keto as Ory Keto\n    participant Hydra as Ory Hydra\n    participant DB as Postgres Database\n\n    %% Phase 1: Registration Initiation\n    User->>Browser: Clicks \"Register\"\n    Browser->>Backend: GET /api/v1/auth/register-challenge\n    Note over Backend: Generates registration_session_id (UUID)\n    Backend->>Redis: Set registration_session:<regSessionID> = \"active\" (TTL 5m)\n    Note over Backend: Sets registration_session_id HttpOnly cookie\n    Backend-->>Browser: 302 Redirect to Frontend /register\n\n    %% Phase 2: Form Submission\n    User->>Browser: Enters Email, DisplayName, DeviceID, Phone\n    Browser->>Backend: POST /api/v1/auth/register (with registration_session_id cookie)\n    Backend->>Redis: Exists registration_session:<regSessionID>?\n    Redis-->>Backend: Yes (active)\n    Note over Backend: Generates requestId & OTP\n    Backend->>DB: Store OTP, Email, and registration_session_id in pending_auth\n    Backend-->>Browser: HTTP 202 Accepted (requestId, expires_in)\n    Browser->>Browser: Redirects to /verify/{requestId}\n\n    %% Phase 3: OTP Verification & Identity Provisioning\n    User->>Browser: Enters 6-digit OTP\n    Browser->>Backend: POST /api/v1/auth/register/verify {requestId, otp} (with registration_session_id cookie)\n    Backend->>Redis: Exists registration_session:<regSessionID>?\n    Redis-->>Backend: Yes (active)\n    Backend->>DB: Find pending_auth by requestId\n    Note over Backend: Double-Binding Check:<br/>Assert pending_auth.registration_session_id == cookie\n    Note over Backend: Verify OTP via Constant-Time comparison<br/>(Timing Attack Protection)\n    \n    Backend->>Kratos: GET /admin/identities?credentials_identifier={email}\n    alt Case A: Identity Exists in Kratos\n        Kratos-->>Backend: KratosID (Reuse existing credentials)\n    else Case B: Identity Does Not Exist in Kratos\n        Backend->>Kratos: POST /admin/identities (Create new identity)\n        Kratos-->>Backend: KratosID\n    end\n\n    Note over Backend: Begin Database Transaction\n    Backend->>DB: Create user record (userUUID, KratosID, Email)\n    Backend->>Keto: Create relation tuple: platform/platform/admin (if admin)\n    Backend->>Keto: Create relation tuple: devices/{deviceID}/owner (subject=KratosID)\n    Backend->>DB: Delete pending_auth row\n    Backend->>DB: Publish UserRegistered outbox event\n    \n    alt Transaction Fails\n        Backend->>DB: Rollback Postgres Transaction\n        Note over Backend: Compensate (Only if Kratos identity was newly created):\n        Backend->>Kratos: DELETE /admin/identities/{kratosID}\n        Backend-->>Browser: HTTP 500 Internal Error\n    else Transaction Succeeds\n        Backend->>DB: Commit Postgres Transaction\n    end\n\n    %% Phase 4: Auto-Login Transition\n    Note over Backend: Prepares RegistrationSession JSON:<br/>{kratos_id: KratosID, verified: true, authenticated: true}\n    Backend->>Redis: Set registration_session:<regSessionID> = jsonPayload (TTL 5m)\n    Backend-->>Browser: JSON response { redirectTo: \"/api/v1/auth/oauth/login\" }\n    \n    Browser->>Backend: GET /api/v1/auth/oauth/login (with registration_session_id cookie)\n    Backend->>Redis: Get registration_session:<regSessionID>\n    Redis-->>Backend: jsonPayload (verified=true, authenticated=true)\n    Note over Backend: Generates OIDC cryptographic parameters:<br/>- session_id (UUID)<br/>- state (CSRF), nonce (Replay)<br/>- PKCE code_verifier & challenge\n    Backend->>DB: Create oauth_sessions row (used=false)\n    Note over Backend: Sets session_id HttpOnly cookie\n    Backend-->>Browser: 302 Redirect to Hydra /oauth2/auth\n\n    Browser->>Hydra: Follows redirect\n    Hydra->>Hydra: Create login_challenge\n    Hydra-->>Browser: 302 Redirect to Backend /login-challenge?login_challenge=xxx\n\n    Browser->>Backend: GET /api/v1/auth/login-challenge?login_challenge=xxx (with registration_session_id & session_id cookies)\n    Backend->>DB: Bind login_challenge to session_id\n    Backend->>Redis: Get registration_session:<regSessionID>\n    Redis-->>Backend: jsonPayload (verified=true, authenticated=true, kratos_id)\n    Note over Backend: Auto-Accept Login:<br/>Bypasses standard credentials UI\n    Backend->>Hydra: PUT /admin/oauth2/auth/requests/login/accept {subject: KratosID}\n    Hydra-->>Backend: Consent Redirect URL\n    Backend-->>Browser: 302 Redirect to Consent URL\n\n    Browser->>Hydra: Follows redirect\n    Hydra->>Hydra: Create consent_challenge\n    Hydra-->>Browser: 302 Redirect to Backend /consent-challenge?consent_challenge=yyy\n\n    Browser->>Backend: GET /api/v1/auth/consent-challenge?consent_challenge=yyy (with session_id cookie)\n    Note over Backend: Consent Hijack Check:<br/>Assert session.login_challenge corresponds to consent\n    Backend->>Hydra: PUT /admin/oauth2/auth/requests/consent/accept (Auto-accept consent)\n    Hydra-->>Backend: Redirect URL pointing back to Hydra (with consent verifier)\n    Backend-->>Browser: 302 Redirect to Hydra /oauth2/auth?consent_verifier=...\n    \n    Browser->>Hydra: GET /oauth2/auth?consent_verifier=...\n    Hydra-->>Browser: 302 Redirect to Backend redirect_uri (/callback?code=xxx&state=yyy)\n\n    Browser->>Backend: GET /api/v1/auth/callback (with session_id cookie)\n    Note over Backend: Double-Lock Check:<br/>Assert state matches DB & used == false\n    Backend->>Hydra: POST /oauth2/token {code, code_verifier}\n    Hydra->>Hydra: Validate PKCE\n    Hydra-->>Backend: AccessToken, RefreshToken, IDToken\n    Backend->>Hydra: GET /.well-known/jwks.json\n    Hydra-->>Backend: JWKS Signing Keys\n    Note over Backend: ID Token Check:<br/>Verify RS256 signature & nonce match\n    Backend->>DB: Mark session used & delete oauth_session\n    Backend->>Redis: Delete registration_session:<regSessionID>\n    Note over Backend: Clears registration_session_id & session_id cookies\n    Note over Backend: Sets access_token & refresh_token HttpOnly cookies\n    Backend-->>Browser: 302 Redirect to /home\n```\n\n---\n\n## 2. Standard OIDC Login Flow (Session-Bound & Rate-Limited)\n\nThis diagram outlines standard login via OTP, detailing session-binding cookie checks, timed rate limiting, session fixation protection, and OIDC token exchange.\n\n```mermaid\nsequenceDiagram\n    autonumber\n    actor User\n    participant Browser as Browser/Frontend\n    participant Backend as Auth Service (Backend)\n    participant DB as Postgres Database\n    participant Kratos as Ory Kratos\n    participant Hydra as Ory Hydra\n\n    %% Step 1: Login Initiation\n    User->>Browser: Clicks \"Login\"\n    Browser->>Backend: GET /api/v1/auth/oauth/login\n    Note over Backend: SSO Check:<br/>Checks access_token cookie\n    \n    alt Token is valid (SSO Fast-Path)\n        Backend->>Hydra: POST /admin/oauth2/introspect\n        Hydra-->>Backend: { active: true, sub: \"KratosID\" }\n        Backend-->>Browser: 302 Redirect directly to /home\n    else Token invalid/absent (Normal Flow)\n        Note over Backend: Generates Cryptographic Material:<br/>- session_id (UUID)<br/>- state (CSRF), nonce (Replay)<br/>- PKCE code_verifier & challenge\n        Backend->>DB: Store oauth_session details (used=false)\n        Note over Backend: Sets session_id HttpOnly cookie\n        Backend-->>Browser: 302 Redirect to Hydra /oauth2/auth\n    end\n\n    %% Step 2: Login Challenge\n    Browser->>Hydra: Redirects to /oauth2/auth\n    Hydra->>Hydra: Create login_challenge\n    Hydra-->>Browser: 302 Redirect to Backend /login-challenge?login_challenge=xxx\n    \n    Browser->>Backend: GET /api/v1/auth/login-challenge (with session_id cookie)\n    Backend->>Hydra: GET /admin/oauth2/auth/requests/login (Verify challenge validity)\n    Hydra-->>Backend: Challenge valid & pending\n    Backend->>DB: Bind login_challenge to session in DB\n    \n    alt Fallback SSO Check (Valid access_token exists)\n        Backend->>Hydra: POST /admin/oauth2/introspect\n        Hydra-->>Backend: { active: true, sub: \"KratosID\" }\n        Backend->>Hydra: PUT /admin/oauth2/auth/requests/login/accept {subject: KratosID}\n        Hydra-->>Backend: Consent Redirect URL\n        Backend-->>Browser: 302 Redirect to Consent URL\n    else No active session (Normal Flow)\n        Note over Backend: Sets login_challenge cookie (non-HttpOnly)\n        Backend-->>Browser: 302 Redirect to Frontend /login (clean URL)\n    end\n\n    %% Step 3: Frontend Cookie Consumption & Login\n    Browser->>Browser: React mounts /login\n    Note over Browser: Flash Cookie Pattern:<br/>Reads login_challenge into memory<br/>Deletes login_challenge cookie immediately\n    User->>Browser: Enters email\n    Browser->>Backend: POST /api/v1/auth/login {email} (with session_id cookie)\n    Note over Backend: Rate Limiter protects endpoint\n    Backend->>DB: Validate session_id exists & get challenge\n    Backend->>Backend: Generate OTP & publish event to Send Email\n    Backend-->>Browser: Redirect to /verify/{requestId}\n\n    %% Step 4: OTP Verification & Challenge Acceptance\n    User->>Browser: Enters 6-digit OTP\n    Browser->>Backend: POST /api/v1/auth/verify {requestId, otp} (with session_id cookie)\n    Note over Backend: OTP check using Constant-Time compare<br/>(Timing Attack Protection)\n    Backend->>DB: Verify OTP hash, expiry, and failed attempts count\n    Backend->>DB: Regenerate session_id (Session Fixation protection)\n    Backend->>DB: Lookup KratosID by email\n    Backend->>Hydra: PUT /admin/oauth2/auth/requests/login/accept {subject: KratosID}\n    Hydra-->>Backend: Returns Consent redirect URL\n    Backend-->>Browser: JSON response { redirectTo: ConsentURL }\n    Note over Browser: AuthContext Intercepts JSON:<br/>Sets window.location.href = ConsentURL\n    Browser->>Hydra: Follows Consent redirect\n\n    %% Step 5: Consent Challenge\n    Hydra->>Hydra: Create consent_challenge\n    Hydra-->>Browser: 302 Redirect to Backend /consent-challenge?consent_challenge=yyy\n    \n    Browser->>Backend: GET /api/v1/auth/consent-challenge (with session_id cookie)\n    Note over Backend: Consent Hijack Check:<br/>Assert session.login_challenge corresponds to consent\n    Backend->>Hydra: PUT /admin/oauth2/auth/requests/consent/accept (Auto-accept consent)\n    Hydra-->>Backend: Returns redirect URL pointing back to Hydra (with consent verifier)\n    Backend-->>Browser: 302 Redirect to Hydra /oauth2/auth?consent_verifier=...\n\n    %% Step 6: Callback & Token Verification\n    Browser->>Hydra: GET /oauth2/auth?consent_verifier=...\n    Hydra-->>Browser: 302 Redirect to Backend redirect_uri (/callback?code=xxx&state=yyy)\n    \n    Browser->>Backend: GET /callback?code=xxx&state=yyy (with session_id cookie)\n    Note over Backend: Double-Lock Check:<br/>Matches state and session_id cookie to DB\n    Backend->>Hydra: POST /oauth2/token {code, code_verifier}\n    Hydra->>Hydra: Verify PKCE (SHA256(verifier) == challenge)\n    Hydra-->>Backend: Returns access_token, refresh_token, id_token\n    \n    Backend->>Hydra: GET /.well-known/jwks.json (Fetch public signing keys)\n    Hydra-->>Backend: Return JWKS public keys\n    Note over Backend: RS256 Validation:<br/>1. Verifies ID Token signature<br/>2. Verifies nonce matches session.Nonce<br/>(ID Token Forgery & Replay Protection)\n    Backend->>DB: Mark session used & delete from DB\n    Note over Backend: Validates Final Redirect URL against Whitelist<br/>(Open Redirect Protection)\n    Note over Backend: Sets access_token & refresh_token<br/>HttpOnly, Secure, SameSite=Lax cookies\n    Backend-->>Browser: 302 Redirect to /home\n```\n";
+document.getElementById('content').innerHTML = marked.parse(md);
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+CREATE DATABASE kratos;
+CREATE DATABASE hydra;
+CREATE DATABASE keto;
+CREATE DATABASE ridesafety_telemetry;
+

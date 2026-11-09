@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CHANGELOG</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.7;
+    color: #1a1a2e;
+    background: #fff;
+    padding: 40px 60px;
+    max-width: 900px;
+    margin: 0 auto;
+    font-size: 14px;
+  }
+  
+  h1 { font-size: 28px; font-weight: 700; color: #0f0f23; margin: 30px 0 15px; border-bottom: 3px solid #4361ee; padding-bottom: 10px; }
+  h2 { font-size: 22px; font-weight: 600; color: #16213e; margin: 25px 0 12px; border-bottom: 1px solid #e0e0e0; padding-bottom: 8px; }
+  h3 { font-size: 17px; font-weight: 600; color: #1a1a2e; margin: 20px 0 10px; }
+  h4 { font-size: 15px; font-weight: 600; color: #333; margin: 15px 0 8px; }
+  
+  p { margin: 8px 0; }
+  
+  strong { color: #0f0f23; }
+  
+  code {
+    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    background: #f4f4f8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    color: #e74c3c;
+  }
+  
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border: 1px solid #313244;
+  }
+  
+  pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+  }
+  
+  blockquote {
+    border-left: 4px solid #4361ee;
+    padding: 10px 20px;
+    margin: 15px 0;
+    background: #f8f9ff;
+    border-radius: 0 6px 6px 0;
+    color: #444;
+  }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    font-size: 13px;
+  }
+  
+  th {
+    background: #4361ee;
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+  
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #e8e8e8;
+  }
+  
+  tr:nth-child(even) td { background: #f8f9fa; }
+  tr:hover td { background: #eef1ff; }
+  
+  ul, ol { margin: 8px 0; padding-left: 25px; }
+  li { margin: 4px 0; }
+  
+  hr {
+    border: none;
+    border-top: 2px solid #e0e0e0;
+    margin: 30px 0;
+  }
+  
+  a { color: #4361ee; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  
+  /* Mermaid diagrams - show as code in PDF */
+  .mermaid-placeholder {
+    background: #f0f4ff;
+    border: 2px dashed #4361ee;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 15px 0;
+    text-align: center;
+    color: #4361ee;
+    font-style: italic;
+  }
+  
+  @media print {
+    body { padding: 20px 30px; font-size: 12px; }
+    pre { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+    h1, h2, h3 { page-break-after: avoid; }
+    hr { page-break-after: avoid; }
+  }
+</style>
+<script>
+// We'll use marked.js CDN for rendering
+</script>
+</head>
+<body>
+<div id="content"></div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+const md = "# Authentication Flow & Troubleshooting Log\n\nThis document tracks recent changes, problems faced, and the solutions implemented across the SafeRide Auth ecosystem.\n\n## 1. The Missing JWT & Broken OIDC Callback\n**Problem:** \nAfter successfully submitting an OTP during login, the browser would transition to the `/home` screen, but the `access_token` and `refresh_token` cookies were completely missing. The backend `/callback` was never being hit.\n\n**Root Cause:**\nThe backend `VerifyOTP` function was successfully returning a JSON response containing an OAuth `redirectTo` string (pointing to Hydra's consent flow). However, the React `AuthContext.tsx` was intercepting the \"success\" flag, ignoring the `redirectTo` instruction, and manually forcing the React Router to navigate to `/home`. Because the browser never followed the backend's redirect, the final OAuth `/callback` (which provisions the cookies) never executed.\n\n**Solution:**\nUpdated `verifyOtp` in `AuthContext.tsx` to detect if `res.data.redirectTo` is present. If it is, the frontend executes `window.location.href = res.data.redirectTo`, halting the React SPA and allowing the browser to properly follow the OIDC HTTP redirects.\n\n---\n\n## 2. Flash Cookie \"login_challenge\" Exposure\n**Problem:**\nDuring the Hydra OIDC login flow, a `login_challenge` string is generated. If we append this to the frontend URL as a query parameter (e.g. `?login_challenge=xyz`), the URL becomes messy and confusing for the user.\n\n**Solution (The Flash Cookie Pattern):**\nThe backend sets the `login_challenge` inside a temporary, non-HttpOnly browser cookie and redirects the user to a completely clean URL: `/login`. \nWhen the React `<LoginPage>` mounts, it reads the cookie into state memory, and then instantly executes:\n`document.cookie = \"login_challenge=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;\"`\nThis instantly destroys the cookie to prevent stale reuse while preserving a pristine URL in the address bar.\n\n---\n\n## 3. Global 401 Interceptor (Infinite Loop on Login Page)\n**Problem:**\nWe wanted to redirect users to the domain login URL (`/api/v1/auth/oauth/login`) whenever a session expired (resulting in a `401 Unauthorized` API response). However, placing this interceptor on `/auth/me` (which checks initial session state) caused an infinite redirect loop when an unauthenticated user naturally landed on the `/login` page.\n\n**Solution:**\nIsolated the 401 interceptor strictly to **application data endpoints** (e.g., `/telemetry/live`, `/reports`, `/settings`). \nAll `/auth/*` endpoints (like `/auth/me` or `/auth/login`) are excluded from the interceptor. If `/auth/me` returns a 401, the React app safely catches it and keeps the user on the `/login` screen without triggering a backend OAuth redirect loop.\n\n---\n\n## 4. Multi-Tab Logout Sync (Reverted)\n**Problem:**\nWe wanted to ensure that if a user has 5 tabs open and clicks \"Logout\" on one, the other 4 log out automatically. The initial implementation used a `storage` event listener bound to the `saferide_session` key.\n\n**Status:** \nThis implementation was **reverted** upon request. The application instead relies on the global 401 interceptor (see #3). If Tab A logs out (destroying the secure cookie), any subsequent data fetch by Tab B will fail with a 401, instantly kicking Tab B out to the login screen securely via the backend.\n\n---\n\n## 5. Security Threat Model & Mitigations\nBelow are the specific cyberattacks the SafeRide authentication system is architected to defeat:\n\n### A. Cross-Site Scripting (XSS)\n* **How it happens:** An attacker injects malicious JavaScript into the React frontend (e.g., via a compromised npm package or text input) to scrape and steal session tokens.\n* **How we tackle it:** We completely avoid storing JWTs in `localStorage`. Instead, we store the `access_token`, `refresh_token`, and `session_id` in **HttpOnly cookies**. The browser guarantees that no JavaScript (not even yours) can read an HttpOnly cookie, making token theft via XSS impossible.\n\n### B. Session Fixation\n* **How it happens:** An attacker forces a victim's browser to use a known `session_id` (e.g., by sending them a malicious link). The victim logs in, elevating that session's privileges, and the attacker immediately hijacks the account using the session ID they provided.\n* **How we tackle it:** We strictly use server-generated cookies rather than URL parameters for session binding. Furthermore, upon a successful OTP verification, the pre-auth session is abandoned and a completely fresh `session_id` is cryptographically generated for the authenticated state.\n\n### C. Timing Attacks (Side-Channel)\n* **How it happens:** An attacker guesses an OTP (e.g., `123456`). If the first digit `1` is correct, the server's string comparison function takes 1 millisecond longer to fail than if it were completely wrong. The attacker measures this microscopic delay to guess the entire code digit-by-digit.\n* **How we tackle it:** The backend uses **Constant-Time Comparison** (`subtle.ConstantTimeCompare` in Go) to verify OTP hashes. The CPU takes the exact same number of clock cycles to verify the OTP regardless of how many digits are correct, completely blinding the attacker.\n\n### D. Brute Force & Credential Stuffing\n* **How it happens:** A botnet spams the `/api/v1/auth/login/verify` endpoint thousands of times a second to brute-force a user's 6-digit OTP before it expires.\n* **How we tackle it:** We implemented a strict **IP/Session-based Rate Limiter** limiting all `/login` and `/register` endpoints to a maximum of 30 requests per minute per user. Any brute-force attempt is instantly blocked with a `429 Too Many Requests` error.\n\n### E. Cross-Site Request Forgery (CSRF)\n* **How it happens:** An attacker tricks a victim into clicking a link on `evil.com`, which automatically sends a hidden POST request to `localhost:5173/api/v1/auth/delete-account`. Because the user is logged in, their browser blindly attaches their session cookies to the attack request.\n* **How we tackle it:** We configure our cookies with the **`SameSite=Lax`** (or `Strict`) attribute. This instructs the browser to never attach SafeRide cookies to cross-origin background POST requests, neutralizing the attack. Additionally, the OIDC flow uses a cryptographic `state` and `nonce` parameter to verify the origin of all OAuth callbacks.\n\n### F. Man-in-the-Middle (MitM) Attacks & Code Interception\n* **How it happens:** An attacker intercepts the network traffic between the browser and the server to steal the OAuth authorization code.\n* **How we tackle it:** We enforce the `Secure` flag on cookies (requiring HTTPS), and our OAuth flow strictly utilizes **PKCE** (Proof Key for Code Exchange). Even if an attacker steals the authorization code in transit, they cannot exchange it for a token without the cryptographically generated `code_verifier` that only your backend possesses.\n\n### G. Open Redirect Attacks\n* **How it happens:** An attacker crafts a malicious URL like `https://yoursite.com/login?redirectTo=http://evil-phishing-site.com`. When the user logs in, they are instantly redirected to the fake site and tricked into giving up more information.\n* **How we tackle it:** The backend strictly controls all OAuth redirect URLs using internal logic and pre-approved whitelists in the Ory Hydra database. The frontend never blindly follows a user-provided URL parameter.\n\n### H. SQL Injection (SQLi)\n* **How it happens:** An attacker types raw SQL commands (like `' OR 1=1; DROP TABLE users;`) into the email login field to manipulate the database.\n* **How we tackle it:** Our Golang backend utilizes modern parameterized queries/ORMs. User input is treated strictly as data strings and never evaluated as executable SQL code.\n\n### I. Replay Attacks\n* **How it happens:** An attacker intercepts a valid login request or OTP verification packet and resends (replays) it 10 minutes later to gain unauthorized access.\n* **How we tackle it:** OTPs are single-use and strictly bound to short-lived time windows (e.g., 5 minutes) via Redis. Furthermore, the OIDC flow generates a cryptographic `nonce` (Number Used Once) that must exactly match the signature inside the final ID Token, ensuring the login sequence cannot be replayed.\n";
+document.getElementById('content').innerHTML = marked.parse(md);
+</script>
+</body>
+</html>

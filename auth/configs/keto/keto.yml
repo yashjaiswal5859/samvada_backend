@@ -1,0 +1,27 @@
+version: v0.8.0-alpha.2
+
+dsn: postgres://samvada:samvada_dev_2026@postgres:5432/keto?sslmode=disable
+
+serve:
+  read:
+    port: 4466
+  write:
+    port: 4467
+
+namespaces:
+  - id: 1
+    name: devices
+  - id: 2
+    name: platform
+  - id: 3
+    name: workspaces
+  - id: 4
+    name: features
+  - id: 5
+    name: organizations
+  - id: 6
+    name: agents
+  - id: 7
+    name: campaigns
+  - id: 8
+    name: kb

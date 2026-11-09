@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>arch</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.7;
+    color: #1a1a2e;
+    background: #fff;
+    padding: 40px 60px;
+    max-width: 900px;
+    margin: 0 auto;
+    font-size: 14px;
+  }
+  
+  h1 { font-size: 28px; font-weight: 700; color: #0f0f23; margin: 30px 0 15px; border-bottom: 3px solid #4361ee; padding-bottom: 10px; }
+  h2 { font-size: 22px; font-weight: 600; color: #16213e; margin: 25px 0 12px; border-bottom: 1px solid #e0e0e0; padding-bottom: 8px; }
+  h3 { font-size: 17px; font-weight: 600; color: #1a1a2e; margin: 20px 0 10px; }
+  h4 { font-size: 15px; font-weight: 600; color: #333; margin: 15px 0 8px; }
+  
+  p { margin: 8px 0; }
+  
+  strong { color: #0f0f23; }
+  
+  code {
+    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    background: #f4f4f8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    color: #e74c3c;
+  }
+  
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border: 1px solid #313244;
+  }
+  
+  pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+  }
+  
+  blockquote {
+    border-left: 4px solid #4361ee;
+    padding: 10px 20px;
+    margin: 15px 0;
+    background: #f8f9ff;
+    border-radius: 0 6px 6px 0;
+    color: #444;
+  }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    font-size: 13px;
+  }
+  
+  th {
+    background: #4361ee;
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+  
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #e8e8e8;
+  }
+  
+  tr:nth-child(even) td { background: #f8f9fa; }
+  tr:hover td { background: #eef1ff; }
+  
+  ul, ol { margin: 8px 0; padding-left: 25px; }
+  li { margin: 4px 0; }
+  
+  hr {
+    border: none;
+    border-top: 2px solid #e0e0e0;
+    margin: 30px 0;
+  }
+  
+  a { color: #4361ee; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  
+  /* Mermaid diagrams - show as code in PDF */
+  .mermaid-placeholder {
+    background: #f0f4ff;
+    border: 2px dashed #4361ee;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 15px 0;
+    text-align: center;
+    color: #4361ee;
+    font-style: italic;
+  }
+  
+  @media print {
+    body { padding: 20px 30px; font-size: 12px; }
+    pre { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+    h1, h2, h3 { page-break-after: avoid; }
+    hr { page-break-after: avoid; }
+  }
+</style>
+<script>
+// We'll use marked.js CDN for rendering
+</script>
+</head>
+<body>
+<div id="content"></div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+const md = "# SafeRide Architecture Documentation\n\n## Frontend Session Management\n\n### 1. Multi-Tab Logout Synchronization\nSafeRide uses a stateless, browser-native event-driven approach to synchronize session state across multiple tabs without incurring API overhead or maintaining persistent WebSocket connections.\n\n**Mechanism: `storage` Event Listener**\n1. When a user explicitly logs out in Tab A, the frontend clears the `saferide_session` object from `localStorage` and triggers the backend `POST /api/v1/auth/logout`.\n2. The browser automatically fires a `StorageEvent` to all other open tabs on the same origin (`localhost:5173`).\n3. The `AuthContext` provider in Tabs B, C, D, etc., listens to this event. If it detects that `saferide_session` was removed (`newValue === null`), it instantly nullifies the local React context state (`isAuthenticated = false`) and redirects the user to the `/login` screen.\n4. **Benefit**: This guarantees 100% immediate logout synchronization across all browser windows with $0 infrastructure cost and zero network polling.\n\n### 2. OIDC Flow \"Flash Cookie\" Pattern\nTo support OAuth 2.0 / OpenID Connect flows with Ory Hydra without exposing ugly or easily tampered `login_challenge` strings in the browser URL address bar, SafeRide utilizes a \"Flash Cookie Consumption\" pattern.\n\n**Mechanism: Read-and-Destroy**\n1. The backend sets the `login_challenge` in a temporary, non-HttpOnly cookie and redirects the browser to a clean URL: `http://localhost:5173/login`.\n2. When the React `LoginPage` mounts, it reads the cookie into its local memory (React State).\n3. In the exact same render cycle, it executes: `document.cookie = \"login_challenge=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;\"`\n4. **Benefit**: This cleanly erases the challenge from the browser storage so that it cannot be accidentally reused (which would cause a \"Session Expired\" error) while allowing the active login page to complete its flow.\n\n### 3. Frontend JSON Redirect Handling\nSince the frontend operates as an SPA communicating with the backend via `fetch` over API endpoints, the final step of the OIDC login acceptance (where the backend must route the user through Hydra Consent) is returned as a JSON payload: `{ \"redirectTo\": \"/api/v1/auth/oauth/login\" }`.\n\nThe `AuthContext` intercepts this JSON payload and assigns `window.location.href = res.data.redirectTo`. This correctly unloads the React app, allowing the browser to follow the standard OAuth2 302 redirects through Hydra and back to the backend `/callback` to finalize the `HttpOnly` token provisioning.\n";
+document.getElementById('content').innerHTML = marked.parse(md);
+</script>
+</body>
+</html>

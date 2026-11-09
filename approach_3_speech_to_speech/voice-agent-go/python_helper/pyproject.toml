@@ -1,0 +1,44 @@
+[tool.poetry]
+name = "voice-agent"
+version = "0.1.0"
+description = "Enterprise AI Voice Agent Platform"
+authors = ["AI <ai@example.com>"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.111.0"
+uvicorn = {extras = ["standard"], version = "^0.30.1"}
+pydantic = {extras = ["dotenv"], version = "^2.8.2"}
+pydantic-settings = "^2.3.4"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.31"}
+asyncpg = "^0.29.0"
+alembic = "^1.13.2"
+redis = {extras = ["hiredis"], version = "^5.0.7"}
+aiokafka = "^0.11.0"
+httpx = "^0.27.0"
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+python-multipart = "^0.0.9"
+openai = "^1.35.13"
+anthropic = "^0.30.1"
+google-genai = "^0.5.0"
+deepgram-sdk = "^3.2.5"
+elevenlabs = "^1.4.1"
+pinecone-client = "^5.0.1"
+langchain-text-splitters = "^0.2.2"
+numpy = "^2.0.0"
+silero-vad = "^4.0"
+structlog = "^24.2.0"
+prometheus-fastapi-instrumentator = "^7.0.0"
+tenacity = "^8.4.1"
+pybreaker = "^1.3.0"
+pandas = "^2.2.0"
+openpyxl = "^3.1.2"
+PyPDF2 = "^3.0.0"
+faiss-cpu = "^1.8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

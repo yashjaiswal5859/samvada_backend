@@ -1,0 +1,27 @@
+version: v1.11.8
+
+dsn: postgres://samvada:samvada_dev_2026@postgres:5432/hydra?sslmode=disable
+
+serve:
+  public:
+    port: 4444
+  admin:
+    port: 4445
+
+urls:
+  self:
+    issuer: http://localhost:4444/
+  login: http://localhost:8080/api/v1/auth/login-challenge
+  consent: http://localhost:8080/api/v1/auth/consent-challenge
+
+secrets:
+  system:
+    - this_is_a_very_secret_system_secret_key_32_chars
+
+ttl:
+  login_consent_request: 1h
+  access_token: 5m
+  refresh_token: 168h
+
+strategies:
+  access_token: jwt

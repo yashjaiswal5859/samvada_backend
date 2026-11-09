@@ -1,0 +1,43 @@
+version: v0.13.0
+
+dsn: postgres://samvada:samvada_dev_2026@postgres:5432/kratos?sslmode=disable
+
+serve:
+  public:
+    base_url: http://localhost:4433/
+    port: 4433
+  admin:
+    base_url: http://localhost:4434/
+    port: 4434
+
+selfservice:
+  default_browser_return_url: http://localhost:8080/
+  allowed_return_urls:
+    - http://localhost:8080/
+
+  flows:
+    error:
+      ui_url: http://localhost:8080/error
+    settings:
+      ui_url: http://localhost:8080/settings
+      privileged_session_max_age: 15m
+    recovery:
+      enabled: false
+    verification:
+      enabled: false
+    logout:
+      after:
+        default_browser_return_url: http://localhost:8080/
+    login:
+      ui_url: http://localhost:8080/login
+    registration:
+      enabled: false
+
+identity:
+  schemas:
+    - id: default
+      url: file:///etc/config/kratos/identity.schema.json
+
+courier:
+  smtp:
+    connection_uri: smtp://mailpit:1025/?skip_ssl_verify=true

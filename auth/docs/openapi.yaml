@@ -1,0 +1,885 @@
+openapi: 3.0.3
+info:
+  title: Samvada Authentication & User Management Service
+  description: |
+    REST API specifications for the **Samvada Voice AI Platform Authentication Service**.
+
+    This service provides passwordless Email + OTP registration, admin registration,
+    subsequent logins, token rotation, session management, and user lifecycle cleanup.
+
+    ## Authentication Model
+    - **Access tokens** are returned in the JSON response body as JWTs issued by Ory Hydra.
+    - **Refresh tokens** are set as `HttpOnly; SameSite=Lax` cookies scoped to `/api/v1/auth`.
+    - Refresh token rotation is enabled — every refresh produces a new token pair.
+    - Access tokens expire after **5 minutes** (300s); refresh cookies last **24 hours**.
+
+    ## Common Behaviour
+    - Every response wraps the payload in a standard envelope: `{ success, correlation_id, data?, error? }`.
+    - An `X-Correlation-ID` header is accepted on every request; if omitted the server generates one automatically.
+    - Rate limiting is enforced per-IP on sensitive endpoints (see individual endpoint descriptions).
+
+    ## Security Headers
+    All responses include the following security headers:
+    - `X-Content-Type-Options: nosniff`
+    - `X-Frame-Options: DENY`
+    - `X-XSS-Protection: 1; mode=block`
+    - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+    - `Content-Security-Policy: default-src 'self'`
+  version: 1.0.0
+  contact:
+    name: Samvada Engineering
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Local development Docker container gateway
+
+tags:
+  - name: Registration
+    description: Rider registration endpoints (OTP-based passwordless signup)
+  - name: Admin Registration
+    description: Platform administrator registration endpoints
+  - name: Login
+    description: Returning-user login endpoints (OTP-based passwordless login)
+  - name: Session
+    description: Token refresh and logout
+  - name: User Management
+    description: User lifecycle management (admin/dev only)
+  - name: Health
+    description: Operational health, readiness, and liveness probes
+
+paths:
+  # ─────────────────────────────────────────────
+  #  REGISTRATION
+  # ─────────────────────────────────────────────
+  /api/v1/auth/register:
+    post:
+      operationId: registerRider
+      tags: [Registration]
+      summary: Request registration OTP
+      description: |
+        Initiates a new rider registration request.
+
+        1. Validates the payload (email format, device ID length, display name).
+        2. Checks device availability (not already owned by another account).
+        3. Generates a 6-digit OTP, stores it in Redis with a 300 s TTL.
+        4. Publishes an OTP delivery event to Kafka for the notification service.
+
+        **Rate limit:** 5 requests / minute / IP.
+      x-ratelimit:
+        limit: 5
+        window: 60s
+        scope: IP
+        key: register
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              email: "rider@example.com"
+              deviceId: "SR-9842-X"
+              displayName: "Alex Rider"
+              phoneNumber: "+1234567890"
+      responses:
+        '202':
+          description: Registration request accepted; OTP sent to email.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/X-Correlation-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OTPAcceptedResponse'
+              example:
+                success: true
+                correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+                data:
+                  requestId: "a3f7656d-bd8a-4adf-a6d3-097167f1a0a6"
+                  expiresIn: 300
+        '409':
+          description: Conflict — email or device already registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+                error:
+                  message: "Device already belongs to another account"
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/auth/register/verify:
+    post:
+      operationId: verifyRiderRegistration
+      tags: [Registration]
+      summary: Verify registration OTP
+      description: |
+        Verifies the 6-digit OTP submitted by the user during registration.
+
+        On success:
+        1. Creates a Kratos identity for the new user.
+        2. Creates the local PostgreSQL user record.
+        3. Establishes `devices/{deviceId}/owner` relation in Ory Keto.
+        4. Issues OAuth2 tokens via Ory Hydra.
+        5. Sets the refresh token as an `HttpOnly` cookie.
+        6. Returns the access token in the JSON body.
+
+        **Rate limit:** 5 requests / minute / IP.
+      x-ratelimit:
+        limit: 5
+        window: 60s
+        scope: IP
+        key: register_verify
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyOTPRequest'
+            example:
+              requestId: "a3f7656d-bd8a-4adf-a6d3-097167f1a0a6"
+              otp: "163919"
+      responses:
+        '200':
+          description: Registration verified. Access token in body, refresh token in `Set-Cookie`.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/X-Correlation-ID'
+            Set-Cookie:
+              description: '`refresh_token=<JWT>; Path=/api/v1/auth; HttpOnly; SameSite=Lax`'
+              schema:
+                type: string
+                example: "refresh_token=eyJ...; Path=/api/v1/auth; HttpOnly; SameSite=Lax"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenEnvelope'
+              example:
+                success: true
+                correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+                data:
+                  accessToken: "eyJhbGciOiJSUzI1NiIsImtpZCI6IjEifQ..."
+                  expiresIn: 3600
+        '400':
+          description: Invalid OTP or invalid request ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+                error:
+                  message: "Invalid OTP"
+        '404':
+          description: Verification session expired or not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ─────────────────────────────────────────────
+  #  ADMIN REGISTRATION
+  # ─────────────────────────────────────────────
+  /api/v1/auth/admin/register:
+    post:
+      operationId: registerAdmin
+      tags: [Admin Registration]
+      summary: Request admin registration OTP
+      description: |
+        Initiates a new platform administrator registration request.
+        No physical device ID is required — it defaults to `SYSTEM` internally.
+
+        **Rate limit:** 5 requests / minute / IP.
+      x-ratelimit:
+        limit: 5
+        window: 60s
+        scope: IP
+        key: admin_register
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterAdminRequest'
+            example:
+              email: "admin@ridesafety.com"
+              displayName: "Platform Admin"
+              phoneNumber: "+1234567890"
+      responses:
+        '202':
+          description: Admin registration accepted; OTP sent.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/X-Correlation-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OTPAcceptedResponse'
+        '409':
+          description: Admin email already registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/auth/admin/verify:
+    post:
+      operationId: verifyAdminRegistration
+      tags: [Admin Registration]
+      summary: Verify admin registration OTP
+      description: |
+        Verifies the admin OTP.
+
+        On success:
+        1. Creates a Kratos identity.
+        2. Creates local admin user record.
+        3. Grants `platform/admin` and `devices/SYSTEM/owner` relationships in Ory Keto.
+        4. Issues OAuth2 tokens.
+
+        **Rate limit:** 5 requests / minute / IP.
+      x-ratelimit:
+        limit: 5
+        window: 60s
+        scope: IP
+        key: admin_verify
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyOTPRequest'
+      responses:
+        '200':
+          description: Admin verified successfully. Returns JWT tokens.
+          headers:
+            Set-Cookie:
+              description: '`refresh_token=<JWT>; Path=/api/v1/auth; HttpOnly; SameSite=Lax`'
+              schema:
+                type: string
+            X-Correlation-ID:
+              $ref: '#/components/headers/X-Correlation-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenEnvelope'
+        '400':
+          description: Invalid OTP or session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ─────────────────────────────────────────────
+  #  LOGIN
+  # ─────────────────────────────────────────────
+  /api/v1/auth/login:
+    post:
+      operationId: requestLoginOTP
+      tags: [Login]
+      summary: Request login OTP
+      description: |
+        Initiates a passwordless login for a registered user.
+        Generates and sends a 6-digit login OTP to the user's email.
+
+        **Rate limit:** 10 requests / minute / IP.
+      x-ratelimit:
+        limit: 10
+        window: 60s
+        scope: IP
+        key: login
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: "rider@example.com"
+      responses:
+        '202':
+          description: Login OTP sent successfully.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/X-Correlation-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OTPAcceptedResponse'
+        '404':
+          description: User email is not registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+                error:
+                  message: "User not found"
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/auth/login/verify:
+    post:
+      operationId: verifyLoginOTP
+      tags: [Login]
+      summary: Verify login OTP
+      description: |
+        Verifies the login OTP.
+
+        On success:
+        1. Validates the OTP against the Redis session.
+        2. Issues new OAuth2 tokens via Ory Hydra.
+        3. Sets the refresh token as an `HttpOnly` cookie.
+
+        **Rate limit:** 10 requests / minute / IP.
+      x-ratelimit:
+        limit: 10
+        window: 60s
+        scope: IP
+        key: login_verify
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyOTPRequest'
+      responses:
+        '200':
+          description: Login successful. Access token in body, refresh token in cookie.
+          headers:
+            Set-Cookie:
+              description: '`refresh_token=<JWT>; Path=/api/v1/auth; HttpOnly; SameSite=Lax`'
+              schema:
+                type: string
+            X-Correlation-ID:
+              $ref: '#/components/headers/X-Correlation-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenEnvelope'
+        '400':
+          description: Invalid OTP.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ─────────────────────────────────────────────
+  #  SESSION (REFRESH & LOGOUT)
+  # ─────────────────────────────────────────────
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshAccessToken
+      tags: [Session]
+      summary: Refresh access token
+      description: |
+        Submits the active refresh token stored in the `refresh_token` HTTP cookie
+        to rotate the OAuth2 credentials via Ory Hydra.
+
+        Returns a fresh access token in the body and updates the `Set-Cookie` header
+        with the new refresh token (rotation is always enabled).
+
+        **Rate limit:** 30 requests / minute / IP.
+      x-ratelimit:
+        limit: 30
+        window: 60s
+        scope: IP
+        key: refresh
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+        - in: cookie
+          name: refresh_token
+          required: true
+          schema:
+            type: string
+          description: The rotating OAuth2 refresh token cookie.
+      responses:
+        '200':
+          description: Tokens refreshed. New access token in body, updated refresh token in cookie.
+          headers:
+            Set-Cookie:
+              description: '`refresh_token=<new JWT>; Path=/api/v1/auth; HttpOnly; SameSite=Lax`'
+              schema:
+                type: string
+            X-Correlation-ID:
+              $ref: '#/components/headers/X-Correlation-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenEnvelope'
+        '400':
+          description: Refresh token cookie is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+                error:
+                  message: "Refresh token cookie is missing"
+        '401':
+          description: Refresh token is invalid or expired (revoked by Hydra).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logoutUser
+      tags: [Session]
+      summary: Log out user
+      description: |
+        Revokes the active refresh token session via Ory Hydra
+        and clears the client's `refresh_token` cookie.
+
+        The access token is **not** revoked — it expires naturally
+        within its 5-minute TTL.
+
+        Accepts an optional `X-User-Id` header for audit-trail enrichment
+        (populated automatically by Oathkeeper in production).
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+        - in: header
+          name: X-User-Id
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >
+            Kratos identity UUID of the logged-in user.
+            Populated by Oathkeeper gateway; used for audit logging.
+        - in: cookie
+          name: refresh_token
+          required: false
+          schema:
+            type: string
+          description: The refresh token cookie to revoke.
+      responses:
+        '204':
+          description: Successfully logged out. Refresh token revoked and cookie cleared.
+          headers:
+            Set-Cookie:
+              description: '`refresh_token=; Path=/api/v1/auth; HttpOnly; SameSite=Lax; Max-Age=-1`'
+              schema:
+                type: string
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ─────────────────────────────────────────────
+  #  USER MANAGEMENT
+  # ─────────────────────────────────────────────
+  /api/v1/auth/users/{id}:
+    delete:
+      operationId: deleteUser
+      tags: [User Management]
+      summary: Delete user account
+      description: |
+        Hard-deletes a user from the platform:
+        1. Removes the local PostgreSQL user record.
+        2. Deletes the Kratos identity.
+        3. Cleans up all Keto relationships to prevent orphans.
+
+        **Intended for admin / developer use only.**
+      parameters:
+        - $ref: '#/components/parameters/X-Correlation-ID'
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The UUID of the user in local PostgreSQL.
+          example: "c47f3f22-0bb4-4f7e-97d1-bcd9c8e1a6f3"
+      responses:
+        '200':
+          description: User and all associated assets successfully deleted.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/X-Correlation-ID'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  correlation_id:
+                    type: string
+                    format: uuid
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "User deleted successfully"
+        '400':
+          description: Invalid UUID format.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              example:
+                success: false
+                correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+                error:
+                  code: "AUTH_400"
+                  message: "Invalid UUID format"
+        '404':
+          description: User ID not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ─────────────────────────────────────────────
+  #  HEALTH / READINESS / LIVENESS
+  # ─────────────────────────────────────────────
+  /health:
+    get:
+      operationId: healthCheck
+      tags: [Health]
+      summary: Basic health check
+      description: Returns `{"status":"UP"}` when the process is running. Does not check downstream dependencies.
+      responses:
+        '200':
+          description: Service is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "UP"
+
+  /ready:
+    get:
+      operationId: readinessCheck
+      tags: [Health]
+      summary: Readiness probe
+      description: |
+        Checks that PostgreSQL and Redis are reachable.
+        Returns `503 Service Unavailable` with the failing component if either is down.
+        Used by Kubernetes readiness probes.
+      responses:
+        '200':
+          description: All dependencies are reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "UP"
+        '503':
+          description: One or more dependencies are unreachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "DOWN"
+                  reason:
+                    type: string
+                    example: "database unreachable"
+
+  /live:
+    get:
+      operationId: livenessCheck
+      tags: [Health]
+      summary: Liveness probe
+      description: Lightweight check used by Kubernetes liveness probes. Always returns `UP` if the process is alive.
+      responses:
+        '200':
+          description: Service is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "UP"
+
+# ═══════════════════════════════════════════════
+#  COMPONENTS
+# ═══════════════════════════════════════════════
+components:
+  # ── Parameters ──────────────────────────────
+  parameters:
+    X-Correlation-ID:
+      in: header
+      name: X-Correlation-ID
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: >
+        Optional correlation identifier for end-to-end distributed tracing.
+        If omitted, the server generates one automatically and includes it
+        in the response `X-Correlation-ID` header.
+      example: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+
+  # ── Response Headers ────────────────────────
+  headers:
+    X-Correlation-ID:
+      schema:
+        type: string
+        format: uuid
+      description: The correlation ID of the processed request.
+      example: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+
+  # ── Reusable Responses ──────────────────────
+  responses:
+    ValidationError:
+      description: Request payload failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            success: false
+            correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+            error:
+              code: "AUTH_422"
+              message: "Key: 'RegisterRequest.Email' Error:Field validation for 'Email' failed on the 'required' tag"
+
+    RateLimited:
+      description: Too many requests — rate limit exceeded.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            success: false
+            correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+            error:
+              message: "Rate limit exceeded"
+
+    InternalError:
+      description: Internal server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            success: false
+            correlation_id: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+            error:
+              message: "Internal Server Error"
+
+  # ── Schemas ─────────────────────────────────
+  schemas:
+    # ─── Request Bodies ───
+    RegisterRequest:
+      type: object
+      required: [email, deviceId, displayName]
+      properties:
+        email:
+          type: string
+          format: email
+          description: The rider's email address.
+          example: "rider@example.com"
+        deviceId:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: Unique telephony device identifier.
+          example: "SR-9842-X"
+        displayName:
+          type: string
+          minLength: 2
+          maxLength: 100
+          description: Human-readable display name for the user.
+          example: "Alex Rider"
+        phoneNumber:
+          type: string
+          description: Optional phone number.
+          example: "+1234567890"
+
+    RegisterAdminRequest:
+      type: object
+      required: [email, displayName]
+      properties:
+        email:
+          type: string
+          format: email
+          description: The admin's email address.
+          example: "admin@ridesafety.com"
+        displayName:
+          type: string
+          minLength: 2
+          maxLength: 100
+          description: Admin display name.
+          example: "Platform Admin"
+        phoneNumber:
+          type: string
+          description: Optional phone number.
+          example: "+1234567890"
+
+    VerifyOTPRequest:
+      type: object
+      required: [requestId, otp]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: The UUID returned by the register / login initiation endpoint.
+          example: "a3f7656d-bd8a-4adf-a6d3-097167f1a0a6"
+        otp:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: 6-digit numeric one-time password.
+          example: "163919"
+
+    LoginRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Registered user's email address.
+          example: "rider@example.com"
+
+    # ─── Response Bodies ───
+    OTPAcceptedResponse:
+      type: object
+      description: Standard envelope returned when an OTP has been sent.
+      properties:
+        success:
+          type: boolean
+          example: true
+        correlation_id:
+          type: string
+          format: uuid
+          example: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+        data:
+          type: object
+          properties:
+            requestId:
+              type: string
+              format: uuid
+              description: Opaque session ID to use when verifying the OTP.
+              example: "a3f7656d-bd8a-4adf-a6d3-097167f1a0a6"
+            expiresIn:
+              type: integer
+              description: OTP validity in seconds.
+              example: 300
+
+    TokenEnvelope:
+      type: object
+      description: Standard envelope returned with an access token after successful authentication.
+      properties:
+        success:
+          type: boolean
+          example: true
+        correlation_id:
+          type: string
+          format: uuid
+          example: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+        data:
+          $ref: '#/components/schemas/TokenData'
+
+    TokenData:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: JWT access token issued by Ory Hydra.
+          example: "eyJhbGciOiJSUzI1NiIsImtpZCI6IjEifQ.eyJzdWIiOiJrcmF0b3MtdXVpZCJ9..."
+        expiresIn:
+          type: integer
+          description: Token validity in seconds.
+          example: 3600
+
+    ErrorEnvelope:
+      type: object
+      description: Standard error envelope returned on all non-2xx responses.
+      properties:
+        success:
+          type: boolean
+          example: false
+        correlation_id:
+          type: string
+          format: uuid
+          example: "7e7a83d2-bf45-42a1-bd8c-572f10b784a9"
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code (e.g. `AUTH_422`, `AUTH_400`).
+          example: "AUTH_404"
+        message:
+          type: string
+          description: Human-readable error description.
+          example: "User not found"
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+          example: "UP"

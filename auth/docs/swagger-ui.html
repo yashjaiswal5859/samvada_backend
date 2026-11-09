@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SafeRide Auth API — Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css" />
+  <style>
+    :root {
+      --sr-primary: #6C5CE7;
+      --sr-bg: #0F0F1A;
+      --sr-surface: #1A1A2E;
+    }
+    html { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--sr-bg);
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+    /* Dark theme overrides */
+    .swagger-ui .topbar { display: none; }
+    .swagger-ui { background: var(--sr-bg) !important; }
+    .swagger-ui .info .title { color: #fff; }
+    .swagger-ui .info p,
+    .swagger-ui .info li,
+    .swagger-ui .info a { color: #b0b0c8; }
+    .swagger-ui .scheme-container { background: var(--sr-surface); box-shadow: none; }
+    .swagger-ui .opblock-tag { color: #e0e0f0 !important; border-bottom: 1px solid #2a2a4a; }
+    .swagger-ui .opblock { border: 1px solid #2a2a4a; background: var(--sr-surface); border-radius: 8px; margin-bottom: 8px; }
+    .swagger-ui .opblock .opblock-summary { border: none; }
+    .swagger-ui .opblock .opblock-summary-description { color: #b0b0c8; }
+    .swagger-ui .opblock-body { background: #141428; }
+    .swagger-ui .opblock.opblock-post { border-color: #6C5CE7; }
+    .swagger-ui .opblock.opblock-post .opblock-summary { background: rgba(108,92,231,0.08); }
+    .swagger-ui .opblock.opblock-delete { border-color: #E83030; }
+    .swagger-ui .opblock.opblock-get { border-color: #00B894; }
+    .swagger-ui .opblock.opblock-get .opblock-summary { background: rgba(0,184,148,0.08); }
+    .swagger-ui table thead tr td, .swagger-ui table thead tr th { color: #e0e0f0; border-bottom: 1px solid #2a2a4a; }
+    .swagger-ui .response-col_status { color: #e0e0f0; }
+    .swagger-ui .response-col_description { color: #b0b0c8; }
+    .swagger-ui .parameter__name { color: #e0e0f0; }
+    .swagger-ui .parameter__type { color: #b0b0c8; }
+    .swagger-ui .model-title { color: #e0e0f0; }
+    .swagger-ui .model { color: #b0b0c8; }
+    .swagger-ui section.models { border: 1px solid #2a2a4a; background: var(--sr-surface); border-radius: 8px; }
+    .swagger-ui section.models h4 { color: #e0e0f0; }
+    .swagger-ui .btn { border-radius: 6px; }
+    .swagger-ui .markdown p, .swagger-ui .markdown li { color: #b0b0c8; }
+    .swagger-ui .markdown code { background: #1e1e3a; color: #a29bfe; padding: 2px 6px; border-radius: 4px; }
+    .swagger-ui .highlight-code pre { background: #0a0a18 !important; border-radius: 8px; }
+    #swagger-ui { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: './openapi.yaml',
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      presets: [
+        SwaggerUIBundle.presets.apis,
+        SwaggerUIBundle.SwaggerUIStandalonePreset
+      ],
+      layout: 'BaseLayout',
+      defaultModelsExpandDepth: 2,
+      defaultModelExpandDepth: 2,
+      docExpansion: 'list',
+      filter: true,
+      showExtensions: true
+    });
+  </script>
+</body>
+</html>

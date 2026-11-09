@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SafeRide — Secure Channel Verification</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ═══════════════════════════════════════════════════════════
+       Design System & Core Variables
+       ═══════════════════════════════════════════════════════════ */
+    :root {
+      --sr-brand-dark: #0A0E1A;
+      --sr-primary: #00C2FF;
+      --sr-primary-light: #80E1FF;
+      --sr-primary-bg: rgba(0, 194, 255, 0.12);
+      --sr-primary-text: #00C2FF;
+
+      --sr-danger: #E24B4A;
+      --sr-danger-bg: rgba(226, 75, 74, 0.12);
+      --sr-warning: #F59E0B;
+      --sr-warning-bg: rgba(245, 158, 11, 0.12);
+      --sr-success: #63C520;
+      
+      --sr-bg-primary: rgba(13, 17, 23, 0.75);
+      --sr-bg-secondary: #0A0E1A;
+      --sr-bg-tertiary: rgba(26, 33, 44, 0.35);
+      --sr-text-primary: #F0F4F8;
+      --sr-text-secondary: #8E9CAE;
+      --sr-text-tertiary: #52637A;
+      --sr-border: rgba(0, 194, 255, 0.18);
+      --sr-radius-sm: 6px;
+      --sr-radius-md: 8px;
+      --sr-radius-lg: 12px;
+      --sr-radius-xl: 16px;
+
+      --sr-shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+      --sr-shadow-glow-blue: 0 0 20px rgba(0, 194, 255, 0.15);
+      --sr-transition-fast: 150ms ease;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.25rem;
+      background: var(--sr-bg-secondary);
+      color: var(--sr-text-primary);
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: absolute;
+      width: 500px;
+      height: 500px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 194, 255, 0.08) 0%, transparent 70%);
+      top: -150px;
+      right: -100px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    body::after {
+      content: '';
+      position: absolute;
+      width: 400px;
+      height: 400px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 194, 255, 0.06) 0%, transparent 70%);
+      bottom: -100px;
+      left: -80px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Card & Structure ── */
+    .card {
+      background: var(--sr-bg-primary);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--sr-border);
+      border-radius: var(--sr-radius-xl);
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: var(--sr-shadow-lg), 0 0 60px rgba(0, 194, 255, 0.06);
+      animation: fadeInUp 0.6s ease both;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── Brand ── */
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 2rem;
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: var(--sr-radius-md);
+      background: var(--sr-brand-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--sr-shadow-glow-blue);
+      border: 1px solid rgba(0, 194, 255, 0.25);
+    }
+
+    .brand-icon-check {
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: var(--sr-primary);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand-name {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--sr-text-primary);
+      letter-spacing: -0.3px;
+    }
+
+    .brand-tag {
+      font-size: 12px;
+      color: var(--sr-text-secondary);
+    }
+
+    /* ── Status Indicator ── */
+    .status-badge {
+      position: absolute;
+      top: 1.5rem;
+      right: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 8px;
+      border-radius: 20px;
+      background: rgba(99, 197, 32, 0.08);
+      border: 1px solid rgba(99, 197, 32, 0.2);
+      color: var(--sr-success);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--sr-success);
+      box-shadow: 0 0 8px var(--sr-success);
+      animation: pulse 1.5s infinite;
+    }
+
+    /* ── Step Indicator ── */
+    .step-row {
+      margin-bottom: 1.75rem;
+      display: flex;
+      gap: 8px;
+    }
+
+    .step-dot {
+      height: 4px;
+      border-radius: 2px;
+      background: var(--sr-bg-tertiary);
+      flex: 1;
+      transition: all var(--sr-transition-fast);
+    }
+
+    .step-dot.active {
+      background: var(--sr-primary);
+      box-shadow: 0 0 8px rgba(0, 194, 255, 0.4);
+    }
+
+    .step-dot.completed {
+      background: var(--sr-success);
+    }
+
+    /* ── View Routing ── */
+    .step-view {
+      display: none;
+    }
+
+    .step-view.active {
+      display: block;
+    }
+
+    .title {
+      font-size: 19px;
+      font-weight: 600;
+      color: var(--sr-text-primary);
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: var(--sr-text-secondary);
+      margin-bottom: 1.75rem;
+      line-height: 1.5;
+    }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      background: var(--sr-bg-tertiary);
+      border: 1px solid var(--sr-border);
+      border-radius: var(--sr-radius-md);
+      padding: 3px;
+      margin-bottom: 1.5rem;
+    }
+
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--sr-text-secondary);
+      border-radius: var(--sr-radius-sm);
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      transition: all var(--sr-transition-fast);
+    }
+
+    .tab.active {
+      background: rgba(13, 17, 23, 0.9);
+      color: var(--sr-primary);
+      font-weight: 600;
+    }
+
+    /* ── Form Styling ── */
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--sr-text-secondary);
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid var(--sr-border);
+      border-radius: var(--sr-radius-md);
+      font-size: 14px;
+      background: rgba(10, 14, 26, 0.6);
+      color: var(--sr-text-primary);
+      transition: border-color var(--sr-transition-fast), box-shadow var(--sr-transition-fast);
+      outline: none;
+    }
+
+    .form-input:focus {
+      border-color: var(--sr-primary);
+      box-shadow: 0 0 0 3px rgba(0, 194, 255, 0.25);
+    }
+
+    .readonly {
+      background: var(--sr-bg-tertiary);
+      color: var(--sr-text-secondary);
+      cursor: default;
+    }
+
+    /* ── OTP Row ── */
+    .otp-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 1.25rem 0;
+    }
+
+    .otp-box {
+      width: 44px;
+      height: 48px;
+      text-align: center;
+      font-size: 18px;
+      font-weight: 600;
+      border: 1.5px solid var(--sr-border);
+      border-radius: var(--sr-radius-md);
+      background: rgba(10, 14, 26, 0.6);
+      color: var(--sr-primary);
+      outline: none;
+      transition: border-color var(--sr-transition-fast), box-shadow var(--sr-transition-fast);
+    }
+
+    .otp-box:focus {
+      border-color: var(--sr-primary);
+      box-shadow: 0 0 0 3px rgba(0, 194, 255, 0.25);
+    }
+
+    .countdown {
+      font-size: 12px;
+      color: var(--sr-text-secondary);
+      margin-top: 10px;
+    }
+
+    .resend-btn {
+      color: var(--sr-primary);
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    /* ── Button ── */
+    .submit-btn {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, var(--sr-primary) 0%, #0088cc 100%);
+      color: #0A0E1A;
+      border: none;
+      border-radius: var(--sr-radius-md);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 1.5rem;
+      transition: all var(--sr-transition-fast);
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0, 194, 255, 0.20);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .submit-btn:hover {
+      background: linear-gradient(135deg, var(--sr-primary-light) 0%, var(--sr-primary) 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(0, 194, 255, 0.35);
+    }
+
+    .submit-btn:active {
+      transform: translateY(0);
+    }
+
+    .submit-btn:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+
+    /* ── Shimmer & Spinner ── */
+    .submit-btn::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.1) 50%, transparent 60%);
+      background-size: 200% 200%;
+      animation: shimmer 3s ease infinite;
+    }
+
+    .spinner {
+      border: 2px solid rgba(10, 14, 26, 0.2);
+      border-top: 2px solid #0A0E1A;
+      border-radius: 50%;
+      width: 16px;
+      height: 16px;
+      animation: spin 1s linear infinite;
+    }
+
+    /* ── Alerts ── */
+    .error-alert {
+      margin-top: 1rem;
+      padding: 10px 12px;
+      background: var(--sr-danger-bg);
+      border: 1px solid var(--sr-danger);
+      border-radius: var(--sr-radius-md);
+      color: var(--sr-danger);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.4;
+      animation: fadeIn 0.3s ease both;
+      display: none;
+    }
+
+    /* ── Success view ── */
+    .success-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 1.5rem 0;
+    }
+
+    .success-icon {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: rgba(99, 197, 32, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--sr-success);
+      margin-bottom: 1.25rem;
+      border: 1px solid rgba(99, 197, 32, 0.3);
+      box-shadow: 0 0 20px rgba(99, 197, 32, 0.2);
+      animation: scaleUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+
+    .success-icon svg {
+      width: 30px;
+      height: 30px;
+      fill: none;
+      stroke: var(--sr-success);
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center;
+      margin-top: 1.25rem;
+      font-size: 12px;
+      color: var(--sr-text-tertiary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .footer svg {
+      width: 13px;
+      height: 13px;
+      fill: none;
+      stroke: var(--sr-text-tertiary);
+      stroke-width: 2;
+    }
+
+    /* ── Keyframes ── */
+    @keyframes fadeInUp {
+      from { transform: translateY(15px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes scaleUp {
+      from { transform: scale(0.7); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.9; }
+      50% { transform: scale(1.1); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.9; }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <!-- Status Indicator -->
+    <div class="status-badge">
+      <span class="status-dot"></span>
+      Live API
+    </div>
+
+    <!-- Brand Header -->
+    <div class="brand">
+      <div class="brand-icon">
+        <svg class="brand-icon-check" viewBox="0 0 24 24">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          <path d="m9 11 2 2 4-4"></path>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <span class="brand-name">SafeRide</span>
+        <span class="brand-tag">Rider safety portal</span>
+      </div>
+    </div>
+
+    <!-- Step Indicator -->
+    <div class="step-row">
+      <div id="dot-1" class="step-dot active"></div>
+      <div id="dot-2" class="step-dot"></div>
+      <div id="dot-3" class="step-dot"></div>
+    </div>
+
+    <!-- STEP 1: Form Inputs -->
+    <div id="step-1-view" class="step-view active">
+      <div class="title" id="form-title">Welcome Back</div>
+      <div class="subtitle" id="form-subtitle">Enter your email linked to your SafeRide IoT device.</div>
+
+      <!-- Mode Selection Tabs -->
+      <div class="tabs">
+        <button id="tab-login" class="tab active" onclick="switchMode('login')">Rider Login</button>
+        <button id="tab-register" class="tab" onclick="switchMode('register')">Register Device</button>
+      </div>
+
+      <!-- Form -->
+      <form id="details-form" onsubmit="handleRequestOtp(event)">
+        <div class="form-group">
+          <label class="form-label">Email address</label>
+          <input type="email" id="input-email" class="form-input" placeholder="rider@example.com" required>
+        </div>
+
+        <!-- Registration Fields (hidden by default) -->
+        <div id="register-fields" style="display: none;">
+          <div class="form-group">
+            <label class="form-label">Device Registration ID</label>
+            <input type="text" id="input-device-id" class="form-input" placeholder="SR-2024-XXXXX">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Display Name</label>
+            <input type="text" id="input-display-name" class="form-input" placeholder="John Doe">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Phone Number (Optional)</label>
+            <input type="tel" id="input-phone" class="form-input" placeholder="+91 98765 43210">
+          </div>
+        </div>
+
+        <div id="error-step-1" class="error-alert"></div>
+
+        <button type="submit" id="btn-request-otp" class="submit-btn">
+          Request Verification Code
+        </button>
+      </form>
+    </div>
+
+    <!-- STEP 2: OTP Verification -->
+    <div id="step-2-view" class="step-view">
+      <div class="title">Verify your identity</div>
+      <div class="subtitle" id="otp-subtitle">OTP sent to rider@example.com</div>
+
+      <div class="form-group" id="otp-device-container" style="display: none;">
+        <label class="form-label">Device registration ID</label>
+        <input type="text" id="otp-device-id" class="form-input readonly" readonly>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Enter OTP</label>
+        <div class="otp-row">
+          <input type="text" maxlength="1" class="otp-box" oninput="handleOtpInput(this, 0)" onkeydown="handleOtpKeydown(event, 0)" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="handleOtpInput(this, 1)" onkeydown="handleOtpKeydown(event, 1)" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="handleOtpInput(this, 2)" onkeydown="handleOtpKeydown(event, 2)" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="handleOtpInput(this, 3)" onkeydown="handleOtpKeydown(event, 3)" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="handleOtpInput(this, 4)" onkeydown="handleOtpKeydown(event, 4)" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" oninput="handleOtpInput(this, 5)" onkeydown="handleOtpKeydown(event, 5)" pattern="[0-9]" inputmode="numeric">
+        </div>
+      </div>
+
+      <div class="countdown" id="countdown-text">
+        Resend OTP in 42 seconds
+      </div>
+
+      <div id="error-step-2" class="error-alert"></div>
+
+      <button id="btn-verify-otp" class="submit-btn" onclick="handleVerifyOtp()">
+        Verify and login
+      </button>
+    </div>
+
+    <!-- STEP 3: Success Granted -->
+    <div id="step-3-view" class="step-view">
+      <div class="success-container">
+        <div class="success-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+        </div>
+        <div class="title">Access Granted</div>
+        <div class="subtitle" style="margin-bottom: 0;">
+          Secure channel verified. Launching telemetry HUD dashboard...
+        </div>
+      </div>
+    </div>
+
+    <!-- Secure Footer -->
+    <div class="footer">
+      <svg viewBox="0 0 24 24">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </svg>
+      Your data is end-to-end encrypted
+    </div>
+  </div>
+
+  <script>
+    // ═══════════════════════════════════════════════════════════
+    // State Variables
+    // ═══════════════════════════════════════════════════════════
+    let authMode = 'login'; // 'login' | 'register'
+    let step = 1;
+    let email = '';
+    let requestId = '';
+    let countdown = 42;
+    let countdownInterval = null;
+
+    // Extract challenge from query
+    const urlParams = new URLSearchParams(window.location.search);
+    const loginChallenge = urlParams.get('login_challenge');
+
+    // ── Tab Switching ──
+    function switchMode(mode) {
+      if (step !== 1) return;
+      authMode = mode;
+      
+      const tabLogin = document.getElementById('tab-login');
+      const tabRegister = document.getElementById('tab-register');
+      const registerFields = document.getElementById('register-fields');
+      const inputDeviceId = document.getElementById('input-device-id');
+      const inputDisplayName = document.getElementById('input-display-name');
+      const formTitle = document.getElementById('form-title');
+      const formSubtitle = document.getElementById('form-subtitle');
+
+      // Clear errors
+      hideError('error-step-1');
+
+      if (mode === 'login') {
+        tabLogin.classList.add('active');
+        tabRegister.classList.remove('active');
+        registerFields.style.display = 'none';
+        inputDeviceId.required = false;
+        inputDisplayName.required = false;
+        formTitle.textContent = 'Welcome Back';
+        formSubtitle.textContent = 'Enter your email linked to your SafeRide IoT device.';
+      } else {
+        tabLogin.classList.remove('active');
+        tabRegister.classList.add('active');
+        registerFields.style.display = 'block';
+        inputDeviceId.required = true;
+        inputDisplayName.required = true;
+        formTitle.textContent = 'Register Safety Device';
+        formSubtitle.textContent = 'Connect your physical SafeRide unit to the cloud dashboard.';
+      }
+    }
+
+    // ── Navigation & Views ──
+    function goToStep(targetStep) {
+      step = targetStep;
+      
+      // Update indicators
+      for (let i = 1; i <= 3; i++) {
+        const dot = document.getElementById(`dot-${i}`);
+        dot.classList.remove('active', 'completed');
+        if (i < step) {
+          dot.classList.add('completed');
+        } else if (i === step) {
+          dot.classList.add('active');
+        }
+      }
+
+      // Update views
+      for (let i = 1; i <= 3; i++) {
+        const view = document.getElementById(`step-${i}-view`);
+        if (i === step) {
+          view.classList.add('active');
+        } else {
+          view.classList.remove('active');
+        }
+      }
+
+      if (step === 2) {
+        document.querySelector('.otp-box').focus();
+        startTimer();
+      } else {
+        clearInterval(countdownInterval);
+      }
+    }
+
+    // ── Countdown Timer ──
+    function startTimer() {
+      countdown = 42;
+      const countdownText = document.getElementById('countdown-text');
+      countdownText.innerHTML = `Resend OTP in ${countdown} seconds`;
+
+      clearInterval(countdownInterval);
+      countdownInterval = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+          clearInterval(countdownInterval);
+          countdownText.innerHTML = `<span class="resend-btn" onclick="resendOtp()">Resend verification code</span>`;
+        } else {
+          countdownText.innerHTML = `Resend OTP in ${countdown} seconds`;
+        }
+      }, 1000);
+    }
+
+    // ── Errors ──
+    function showError(elementId, message) {
+      const el = document.getElementById(elementId);
+      el.textContent = message;
+      el.style.display = 'block';
+    }
+
+    function hideError(elementId) {
+      const el = document.getElementById(elementId);
+      el.style.display = 'none';
+    }
+
+    // ── Input Handling for OTP (glowing, tab navigation, paste support) ──
+    const otpBoxes = document.querySelectorAll('.otp-box');
+
+    function handleOtpInput(input, index) {
+      // Validate numerical inputs only
+      input.value = input.value.replace(/[^0-9]/g, '');
+
+      if (input.value.length === 1 && index < 5) {
+        otpBoxes[index + 1].focus();
+      }
+    }
+
+    function handleOtpKeydown(e, index) {
+      if (e.key === 'Backspace' && !otpBoxes[index].value && index > 0) {
+        otpBoxes[index - 1].focus();
+      }
+    }
+
+    // Paste handler across all OTP boxes
+    document.querySelector('.otp-row').addEventListener('paste', (e) => {
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      const cleanText = text.replace(/[^0-9]/g, '').substring(0, 6);
+      
+      for (let i = 0; i < cleanText.length; i++) {
+        otpBoxes[i].value = cleanText[i];
+      }
+      if (cleanText.length > 0) {
+        const nextFocus = Math.min(cleanText.length, 5);
+        otpBoxes[nextFocus].focus();
+      }
+    });
+
+    // ── Request Verification Code (POST login or register) ──
+    async function handleRequestOtp(e) {
+      e.preventDefault();
+      hideError('error-step-1');
+
+      email = document.getElementById('input-email').value;
+      const btn = document.getElementById('btn-request-otp');
+      
+      const payload = { email };
+      let endpoint = '/api/v1/auth/login';
+
+      if (authMode === 'register') {
+        payload.deviceId = document.getElementById('input-device-id').value;
+        payload.displayName = document.getElementById('input-display-name').value;
+        payload.phoneNumber = document.getElementById('input-phone').value;
+        endpoint = '/api/v1/auth/register';
+      }
+
+      setLoading(btn, true);
+
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const json = await res.json();
+        
+        if (!res.ok || !json.success) {
+          throw new Error(json.error?.message || 'Connection or validation failed');
+        }
+
+        requestId = json.data.requestId;
+        
+        // Show OTP view setup
+        document.getElementById('otp-subtitle').innerHTML = `OTP sent to ${email} <br/><small style="color:var(--sr-primary);margin-top:6px;display:inline-block">💡 Look up OTP in Mailpit Web UI at http://localhost:8025</small>`;
+        
+        const devContainer = document.getElementById('otp-device-container');
+        if (authMode === 'register') {
+          devContainer.style.display = 'block';
+          document.getElementById('otp-device-id').value = payload.deviceId;
+        } else {
+          devContainer.style.display = 'none';
+        }
+
+        goToStep(2);
+      } catch (err) {
+        showError('error-step-1', err.message);
+      } finally {
+        setLoading(btn, false);
+      }
+    }
+
+    // ── Resend Code ──
+    async function resendOtp() {
+      hideError('error-step-2');
+      let endpoint = '/api/v1/auth/login';
+      const payload = { email };
+
+      if (authMode === 'register') {
+        payload.deviceId = document.getElementById('input-device-id').value;
+        payload.displayName = document.getElementById('input-display-name').value;
+        payload.phoneNumber = document.getElementById('input-phone').value;
+        endpoint = '/api/v1/auth/register';
+      }
+
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const json = await res.json();
+        
+        if (!res.ok || !json.success) {
+          throw new Error(json.error?.message || 'Resend failed');
+        }
+
+        requestId = json.data.requestId;
+        startTimer();
+      } catch (err) {
+        showError('error-step-2', err.message);
+      }
+    }
+
+    // ── Verify Verification Code (POST verify) ──
+    async function handleVerifyOtp() {
+      hideError('error-step-2');
+      
+      let otp = '';
+      otpBoxes.forEach(box => otp += box.value);
+
+      if (otp.length !== 6) {
+        showError('error-step-2', 'Please enter a valid 6-digit verification code.');
+        return;
+      }
+
+      const btn = document.getElementById('btn-verify-otp');
+      const payload = {
+        requestId,
+        otp,
+        loginChallenge: loginChallenge || ''
+      };
+      
+      const endpoint = authMode === 'login' ? '/api/v1/auth/login/verify' : '/api/v1/auth/register/verify';
+
+      setLoading(btn, true);
+
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const json = await res.json();
+
+        if (!res.ok || !json.success) {
+          throw new Error(json.error?.message || 'OTP verification failed');
+        }
+
+        goToStep(3);
+
+        // Redirect browser to final destination
+        setTimeout(() => {
+          if (json.data && json.data.redirectTo) {
+            window.location.href = json.data.redirectTo;
+          } else {
+            window.location.href = 'http://localhost:5174/home';
+          }
+        }, 1200);
+
+      } catch (err) {
+        showError('error-step-2', err.message);
+      } finally {
+        setLoading(btn, false);
+      }
+    }
+
+    // Button Spinner helper
+    function setLoading(btn, isLoading) {
+      if (isLoading) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner"></span>`;
+      } else {
+        btn.disabled = false;
+        btn.innerHTML = step === 1 ? 'Request Verification Code' : 'Verify and login';
+      }
+    }
+  </script>
+
+</body>
+</html>

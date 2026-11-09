@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>learning guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.7;
+    color: #1a1a2e;
+    background: #fff;
+    padding: 40px 60px;
+    max-width: 900px;
+    margin: 0 auto;
+    font-size: 14px;
+  }
+  
+  h1 { font-size: 28px; font-weight: 700; color: #0f0f23; margin: 30px 0 15px; border-bottom: 3px solid #4361ee; padding-bottom: 10px; }
+  h2 { font-size: 22px; font-weight: 600; color: #16213e; margin: 25px 0 12px; border-bottom: 1px solid #e0e0e0; padding-bottom: 8px; }
+  h3 { font-size: 17px; font-weight: 600; color: #1a1a2e; margin: 20px 0 10px; }
+  h4 { font-size: 15px; font-weight: 600; color: #333; margin: 15px 0 8px; }
+  
+  p { margin: 8px 0; }
+  
+  strong { color: #0f0f23; }
+  
+  code {
+    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    background: #f4f4f8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    color: #e74c3c;
+  }
+  
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border: 1px solid #313244;
+  }
+  
+  pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+  }
+  
+  blockquote {
+    border-left: 4px solid #4361ee;
+    padding: 10px 20px;
+    margin: 15px 0;
+    background: #f8f9ff;
+    border-radius: 0 6px 6px 0;
+    color: #444;
+  }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    font-size: 13px;
+  }
+  
+  th {
+    background: #4361ee;
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+  
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #e8e8e8;
+  }
+  
+  tr:nth-child(even) td { background: #f8f9fa; }
+  tr:hover td { background: #eef1ff; }
+  
+  ul, ol { margin: 8px 0; padding-left: 25px; }
+  li { margin: 4px 0; }
+  
+  hr {
+    border: none;
+    border-top: 2px solid #e0e0e0;
+    margin: 30px 0;
+  }
+  
+  a { color: #4361ee; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  
+  /* Mermaid diagrams - show as code in PDF */
+  .mermaid-placeholder {
+    background: #f0f4ff;
+    border: 2px dashed #4361ee;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 15px 0;
+    text-align: center;
+    color: #4361ee;
+    font-style: italic;
+  }
+  
+  @media print {
+    body { padding: 20px 30px; font-size: 12px; }
+    pre { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+    h1, h2, h3 { page-break-after: avoid; }
+    hr { page-break-after: avoid; }
+  }
+</style>
+<script>
+// We'll use marked.js CDN for rendering
+</script>
+</head>
+<body>
+<div id="content"></div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+const md = "# RideSafety Auth Service - Learning & Integration Guide\n\nWelcome to the **Auth Service** codebase! This microservice provides production-grade **Email + OTP** authentication, integrated with the Ory ecosystem (**Kratos, Hydra, Keto**) following **Clean Architecture** principles.\n\nThis guide details the system design, code flow, and the exact sequence of commands to run, test, and interact with the service.\n\n---\n\n## 1. Directory Structure\n\nThe service is structured as follows to ensure high separation of concerns:\n\n```text\nauth/\n├── cmd/\n│   ├── auth-service/     # Main entry point (main.go)\n│   └── migrate/          # Custom DB migrations runner tool\n├── docs/                 # Documentation (like this guide)\n├── migrations/           # PostgreSQL DB migrations (up/down SQL scripts)\n└── internal/             # Private application source code\n    ├── api/              # API layer: handlers, routes, request/response validation, middleware\n    ├── application/      # Application layer: use cases (register, login, logout, refresh)\n    ├── domain/           # Domain layer: pure entities, repository interfaces, domain events\n    ├── infrastructure/   # Infrastructure layer: postgres/redis/kafka/ory client adapters\n    ├── platform/         # Cross-cutting adapters (cache, eventbus, identity orchestrator)\n    ├── shared/           # Shared utilities (OTP generator, app errors, response helpers)\n    └── bootstrap/        # Server bootstrapper, configuration, DI container wiring\n\nThe external infrastructure orchestration configurations (PostgreSQL, Redis, Kafka, Ory configurations, and Docker Compose files) are kept in:\n`configs/` and `deployments/compose/` inside the `auth` directory.\n```\n\n---\n\n## 2. Core Flows (Architecture in Action)\n\n### Registration Flow\n1. **POST `/register`**:\n   - The user submits their email, displayName, and deviceId.\n   - The system checks **Keto** to ensure the device is not already owned.\n   - Generates a 6-digit OTP, stores a hashed version in Postgres (`pending_auth`), and saves the registration details in `metadata`.\n   - Transactionally persists a `UserRegistered` or `OTPRequested` event into `outbox_events` and commits.\n   - The **Outbox Publisher** background worker picks up the event and streams it to Kafka on `auth.email.send`.\n2. **POST `/register/verify`**:\n   - The client submits the `requestId` and `otp`.\n   - The system validates the OTP. If valid, it:\n     - Creates the identity in **Ory Kratos**.\n     - Creates the user in local Postgres (`users` table).\n     - Deletes the `pending_auth` session.\n     - Calls **Ory Hydra** to generate a token pair.\n     - Returns the `accessToken` in the JSON body and the `refreshToken` in a secure `HttpOnly` cookie.\n\n### Login Flow\n1. **POST `/login`**:\n   - The user submits their email.\n   - The system verifies the user exists in local Postgres.\n   - Generates an OTP, hashes it, saves it to `pending_auth`, and transactionally writes an outbox event.\n   - The worker publishes a `LOGIN_OTP` send event to Kafka.\n2. **POST `/login/verify`**:\n   - Client sends `requestId` and `otp`.\n   - If verified, the system calls **Hydra** to generate new tokens, deletes the session, and returns the tokens.\n\n---\n\n## 3. Sequence of Commands (Step-by-Step)\n\nFollow this sequence of commands in your terminal to set up, build, migrate, and test the auth service locally.\n\n### Step 1: Initialize Dependencies & Build Project Root\nVerify that your Go environment is correct:\n```bash\n# Check Go version (requires Go 1.26+)\ngo version\n\n# Download Go dependencies\ngo mod tidy\n```\n\n### Step 2: Spin Up the Ory & Infrastructure Stack\nStart PostgreSQL, Redis, Kafka, Ory Kratos, Ory Hydra, Ory Keto, Mailpit, and Kafka-UI:\n```bash\n# Start Docker Compose services in the background\ndocker-compose -f deployments/compose/docker-compose.yml up -d\n```\nYou can view the health status of all containers:\n```bash\ndocker-compose -f deployments/compose/docker-compose.yml ps\n```\n\n### Step 3: Run Database Migrations\nRun the database migrations up command to create the tables (`users`, `pending_auth`, `outbox_events`, `audit_logs`, `idempotency_keys`):\n```bash\n# Compile and run migrations\ngo run cmd/migrate/main.go up\n```\n\n### Step 4: Seed Ory Hydra client\nFor the Auth Service to request tokens from Hydra, an OAuth2 client must be registered in Hydra:\n```bash\n# Create the client 'auth-service-client' in Ory Hydra\ndocker-compose -f deployments/compose/docker-compose.yml exec hydra \\\n  hydra clients create \\\n  --endpoint http://localhost:4445/ \\\n  --id auth-service-client \\\n  --secret auth-service-secret \\\n  --grant-types authorization_code,refresh_token \\\n  --response-types code \\\n  --scope openid,offline_access \\\n  --callbacks http://localhost:8080/api/v1/auth/callback\n```\n\n### Step 5: Start the Auth Service\nNow run the Go application locally:\n```bash\n# Run the Go auth service\ngo run cmd/auth-service/main.go\n```\nThe HTTP server will start on port `8080` (endpoints base: `/api/v1/auth`).\n\n---\n\n## 4. How to Test the API (Request Sequencing)\n\n### 1. Register User\n```bash\ncurl -X POST http://localhost:8080/api/v1/auth/register \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Correlation-ID: test-correlation-id\" \\\n  -d '{\n    \"email\": \"learning@example.com\",\n    \"deviceId\": \"DEVICE-100\",\n    \"displayName\": \"Alex\"\n  }'\n```\n*Response:* Returns `202 Accepted` with a `requestId` and `expiresIn`.\n```json\n{\n  \"success\": true,\n  \"correlation_id\": \"test-correlation-id\",\n  \"data\": {\n    \"requestId\": \"550e8400-e29b-41d4-a716-446655440000\",\n    \"expiresIn\": 300\n  }\n}\n```\n\n### 2. Retrieve the OTP Code\nOpen your web browser and navigate to:\n- **Mailpit Web UI**: `http://localhost:8025`\n\nYou will see an email containing the 6-digit OTP code (e.g., `584920`).\n\n### 3. Verify Registration OTP\n```bash\ncurl -X POST http://localhost:8080/api/v1/auth/register/verify \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Correlation-ID: test-correlation-id\" \\\n  -d '{\n    \"requestId\": \"550e8400-e29b-41d4-a716-446655440000\",\n    \"otp\": \"584920\"\n  }'\n```\n*Response:* Returns `200 OK` with `accessToken`, and sets the `refresh_token` in a cookie.\n\n### 4. Refresh Token Pair\n```bash\ncurl -X POST http://localhost:8080/api/v1/auth/refresh \\\n  -H \"X-Correlation-ID: test-correlation-id\" \\\n  --cookie \"refresh_token=YOUR_REFRESH_TOKEN_HERE\"\n```\n\n### 5. Start Login Flow (Subsequent Logins)\n```bash\ncurl -X POST http://localhost:8080/api/v1/auth/login \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Correlation-ID: test-correlation-id\" \\\n  -d '{\n    \"email\": \"learning@example.com\"\n  }'\n```\nRetrieve the new OTP from Mailpit and verify:\n```bash\ncurl -X POST http://localhost:8080/api/v1/auth/login/verify \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Correlation-ID: test-correlation-id\" \\\n  -d '{\n    \"requestId\": \"NEW_REQUEST_ID\",\n    \"otp\": \"NEW_OTP\"\n  }'\n```\n\n### 6. Logout\n```bash\ncurl -X POST http://localhost:8080/api/v1/auth/logout \\\n  -H \"X-User-Id: USER_KRATOS_ID\" \\\n  -H \"X-Correlation-ID: test-correlation-id\" \\\n  --cookie \"refresh_token=YOUR_REFRESH_TOKEN_HERE\"\n```\n*Response:* `204 No Content` (clears cookie and revokes token).\n";
+document.getElementById('content').innerHTML = marked.parse(md);
+</script>
+</body>
+</html>

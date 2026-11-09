@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SafeRide — Verify Identity</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <div class="card">
+    <div class="status-badge">
+      <span class="status-dot"></span>
+      Live API
+    </div>
+
+    <!-- Brand -->
+    <div class="brand">
+      <div class="brand-icon">
+        <svg class="brand-icon-check" viewBox="0 0 24 24">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          <path d="m9 11 2 2 4-4"></path>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <span class="brand-name">SafeRide</span>
+        <span class="brand-tag">Rider safety portal</span>
+      </div>
+    </div>
+
+    <!-- Step Dot Indicator -->
+    <div class="step-row">
+      <div class="step-dot completed"></div>
+      <div class="step-dot active" id="dot-verify"></div>
+      <div class="step-dot" id="dot-success"></div>
+    </div>
+
+    <!-- STEP 2 View (Default) -->
+    <div id="verify-container">
+      <div class="title">Verify your identity</div>
+      <div class="subtitle" id="otp-subtitle">Checking request...</div>
+
+      <div class="form-group">
+        <label class="form-label">Enter OTP</label>
+        <div class="otp-row">
+          <input type="text" maxlength="1" class="otp-box" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" pattern="[0-9]" inputmode="numeric">
+          <input type="text" maxlength="1" class="otp-box" pattern="[0-9]" inputmode="numeric">
+        </div>
+      </div>
+
+      <div class="countdown" id="countdown-text">
+        Resend OTP in 42 seconds
+      </div>
+
+      <div id="error-box" class="error-alert"></div>
+
+      <button id="btn-submit" class="submit-btn">
+        Verify and login
+      </button>
+    </div>
+
+    <!-- STEP 3 View (Success - hidden initially) -->
+    <div id="success-container" class="success-container" style="display: none;">
+      <div class="success-icon">
+        <svg viewBox="0 0 24 24">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+      </div>
+      <div class="title">Access Granted</div>
+      <div class="subtitle" style="margin-bottom: 0;">
+        Secure channel verified. Launching telemetry HUD dashboard...
+      </div>
+    </div>
+
+    <div class="footer">
+      <svg viewBox="0 0 24 24">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </svg>
+      Your data is end-to-end encrypted
+    </div>
+  </div>
+
+  <script src="/static/js/verify.js"></script>
+</body>
+</html>

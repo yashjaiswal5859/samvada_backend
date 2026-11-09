@@ -1,0 +1,20 @@
+# Exclude standard files/directories from Docker builds
+.git
+.idea
+.vscode
+vendor
+bin
+*.test
+*.out
+*.exe
+.env
+.env.local
+Makefile
+docker-compose.yml
+deployments/compose
+README.md
+docs/
+Auth_PRD/
+*~
+# Exclude current build artifacts
+cmd/auth-service/auth-service
